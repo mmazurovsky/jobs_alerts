@@ -1,0 +1,7 @@
+save login session
+use sessions where possible
+fill search, start searching
+save positions
+message them in telegram
+set up job
+make telegram bot from it

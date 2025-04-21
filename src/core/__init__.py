@@ -1,0 +1,1 @@
+"""Core package for jobs_alerts.""" 
