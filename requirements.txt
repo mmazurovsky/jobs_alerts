@@ -5,8 +5,8 @@ playwright>=1.42.0
 beautifulsoup4>=4.12.0
 pandas>=2.2.0
 apscheduler>=3.10.4
-agentql>=1.9.2
-python-telegram-bot==20.7
+python-telegram-bot>=20.8
+httpx>=0.27.2
 
 # Development dependencies
 pytest>=7.4.0

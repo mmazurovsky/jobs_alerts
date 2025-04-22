@@ -42,6 +42,14 @@ logs/
 linkedin_state.json
 .DS_Store
 
+# Playwright
+browser_data/
+**/browser_data/
+playwright-log.txt
+**/test-results/
+**/playwright-report/
+**/playwright/.cache/
+
 # Database
 *.db
 *.sqlite3

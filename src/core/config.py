@@ -50,13 +50,6 @@ class Config:
         else:
             logger.info("Loaded LINKEDIN_PASSWORD: [MASKED]")
         
-        # AgentQL settings
-        self.agentql_api_key = os.getenv('AGENTQL_API_KEY')
-        if not self.agentql_api_key:
-            logger.error("AGENTQL_API_KEY not found in environment variables")
-        else:
-            logger.info(f"Loaded AGENTQL_API_KEY: {self.agentql_api_key[:5]}...")
-        
         # Scraping settings
         self.max_jobs_per_search = int(os.getenv('MAX_JOBS_PER_SEARCH', '100'))
         self.search_interval_minutes = int(os.getenv('SEARCH_INTERVAL_MINUTES', '60'))
@@ -84,16 +77,12 @@ class Config:
         if not self.linkedin_email or not self.linkedin_password:
             logger.error("LinkedIn credentials are not configured")
             return False
-        if not self.agentql_api_key:
-            logger.error("AgentQL API key is not configured")
-            return False
         return True
     
     def _log_config(self):
         """Log the current configuration, masking sensitive values."""
         logger.info("Current configuration:")
         logger.info(f"LinkedIn Email: {self.linkedin_email}")
-        logger.info(f"AgentQL API Key: {self.agentql_api_key[:5]}..." if self.agentql_api_key else "AgentQL API Key: Not set")
         logger.info(f"Max Jobs Per Search: {self.max_jobs_per_search}")
         logger.info(f"Search Interval: {self.search_interval_minutes} minutes")
         logger.info(f"Save Path: {self.save_path}")

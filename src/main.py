@@ -29,14 +29,18 @@ async def run_application():
         logger.error("Invalid configuration. Exiting...")
         return
     
-    # Start the Telegram bot in the background
-    bot_task = asyncio.create_task(setup_bot())
+    # Start the Telegram bot
+    application = await setup_bot()
+    if not application:
+        logger.error("Failed to start Telegram bot")
+        return
 
     # Verify login first
     async with LinkedInScraper() as scraper:
         login_successful = await scraper.login()
         if not login_successful:
             logger.error("Login verification failed. Exiting...")
+            await application.stop()
             return
         else:
             logger.info("Successfully logged in to LinkedIn")
@@ -54,18 +58,11 @@ async def run_application():
                         job_title=job.title,
                         company=job.company,
                         location=job.location,
-                        job_url=job.job_url
+                        job_url=job.link
                     )
     
-
-    
-    # Keep the application running without starting the scheduler yet
-    try:
-        while True:
-            await asyncio.sleep(1)
-    except asyncio.CancelledError:
-        stop_scheduler()
-        bot_task.cancel()
+    # Start polling for Telegram updates
+    await application.run_polling()
 
 def main():
     """
@@ -83,8 +80,6 @@ def main():
     try:
         # Debug logging for environment variables
         logger.info("Checking environment variables at startup:")
-        logger.info(f"AGENTQL_API_KEY from env: {os.getenv('AGENTQL_API_KEY', '')[:5]}...")
-        logger.info(f"AGENTQL_API_KEY from config: {config.agentql_api_key[:5]}...")
         logger.info(f"LINKEDIN_EMAIL from env: {os.getenv('LINKEDIN_EMAIL', '')}")
         logger.info(f"LINKEDIN_EMAIL from config: {config.linkedin_email}")
         
