@@ -36,7 +36,6 @@ class JobSearchManager:
         
         # Notify the scheduler about the new job search
         self._notify_scheduler()
-        
         return job_search
     
     def remove_job_search(self, user_id: int, search_id: str) -> bool:
@@ -76,7 +75,17 @@ class JobSearchManager:
         global _scheduler
         if _scheduler:
             # Update the scheduler with the latest job searches
-            _scheduler.update_job_searches()
+            # We need to run this in an event loop since it's an async method
+            import asyncio
+            try:
+                # Get the current event loop
+                loop = asyncio.get_event_loop()
+                # Run the update_job_searches method
+                loop.create_task(_scheduler.update_job_searches())
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error updating job searches: {e}")
 
 def set_scheduler(scheduler) -> None:
     """Set the global scheduler instance."""

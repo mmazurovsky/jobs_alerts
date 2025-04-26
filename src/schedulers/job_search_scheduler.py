@@ -9,7 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.jobstores.memory import MemoryJobStore
 
-from src.data.data import JobSearchOut, TimePeriod, JobListing
+from src.data.data import JobSearchOut, TimePeriod, JobListing, SentJobsTracker
 from src.user.job_search import get_active_job_searches
 from src.core.linkedin_scraper import LinkedInScraper
 from src.bot.telegram_bot import TelegramBot
@@ -29,6 +29,7 @@ class JobSearchScheduler:
         )
         self._running = False
         self._job_ids: Set[str] = set()
+        self._sent_jobs_tracker = SentJobsTracker()
     
     async def start(self) -> None:
         """Start the scheduler."""
@@ -55,6 +56,7 @@ class JobSearchScheduler:
         self._scheduler.shutdown()
         self._running = False
         self._job_ids.clear()
+        self._sent_jobs_tracker.clear_all()  # Clear sent jobs history
         
         logger.info("Job search scheduler stopped")
     
@@ -73,6 +75,10 @@ class JobSearchScheduler:
         # Add or update jobs for active searches
         for search in active_searches:
             if search.id not in self._job_ids:
+                # Process the new job search immediately before scheduling it
+                logger.info(f"Processing new job search immediately: {search.id}")
+                await self._process_search(search, is_immediate=True)
+                
                 # Create a new job for this search with the appropriate trigger
                 trigger = search.time_period.get_cron_trigger()
                 
@@ -87,25 +93,69 @@ class JobSearchScheduler:
                 self._job_ids.add(search.id)
                 logger.info(f"Scheduled job search {search.id}: {search.job_title} with time period {search.time_period.name}")
     
-    async def _process_search(self, search: JobSearchOut) -> None:
-        """Process a single job search."""
-        logger.info(f"Processing search: {search.job_title}")
+    async def _process_search(self, search: JobSearchOut, is_immediate: bool = False) -> None:
+        """Process a job search and send notifications for new jobs.
+        
+        Args:
+            search: The job search to process
+            is_immediate: Whether this is an immediate execution (vs scheduled)
+        """
         try:
+            if is_immediate:
+                await self.telegram_bot.application.bot.send_message(
+                    search.user_id,
+                    f"🔍 Starting immediate search for: {search.job_title}\n"
+                    f"Location: {search.location}\n"
+                    f"Job Types: {', '.join(search.job_types)}\n"
+                    f"Remote Types: {', '.join(search.remote_types)}\n"
+                    f"Time Period: {search.time_period}\n"
+                    f"Please wait while I search for jobs..."
+                )
+
+            # Search for jobs
             jobs = await self.scraper.search_jobs(
-                keywords=search.job_title,
-                location=search.location,
-                job_types=search.job_types,
-                remote_types=search.remote_types
+                search.job_title,
+                search.location,
+                search.job_types,
+                search.remote_types,
+                search.time_period
             )
-            
-            if jobs:
+
+            # Filter out jobs that have already been sent to this user
+            new_jobs = [
+                job for job in jobs 
+                if not self._sent_jobs_tracker.is_job_sent(search.user_id, job.link)
+            ]
+
+            if new_jobs:
                 # Send notifications for new jobs
-                await self.telegram_bot.send_job_listings(search.user_id, jobs)
-                logger.info(f"Sent {len(jobs)} job notifications to user {search.user_id}")
+                await self.telegram_bot.send_job_listings(search.user_id, new_jobs)
+                
+                # Mark jobs as sent
+                for job in new_jobs:
+                    self._sent_jobs_tracker.mark_job_sent(search.user_id, job.link)
+
+                if is_immediate:
+                    await self.telegram_bot.application.bot.send_message(
+                        search.user_id,
+                        f"✅ Found {len(new_jobs)} new jobs matching your search criteria.\n"
+                        f"This search will run every {search.time_period.seconds // 60} minutes."
+                    )
             else:
-                logger.info(f"No new jobs found for {search.job_title}")
+                if is_immediate:
+                    await self.telegram_bot.application.bot.send_message(
+                        search.user_id,
+                        "ℹ️ No new jobs found matching your search criteria.\n"
+                        f"This search will run every {search.time_period.seconds // 60} minutes."
+                    )
+
         except Exception as e:
-            logger.error(f"Error processing job search {search.id}: {e}")
+            logger.error(f"Error processing job search: {e}")
+            if is_immediate:
+                await self.telegram_bot.application.bot.send_message(
+                    search.user_id,
+                    "❌ An error occurred while searching for jobs. Please try again later."
+                )
     
     async def update_job_searches(self) -> None:
         """Update scheduled job searches based on active searches."""

@@ -10,7 +10,7 @@ from pathlib import Path
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext, ElementHandle
 
 from src.core.config import config
-from src.core.data import JobListing
+from src.data.data import JobListing
 
 logger = logging.getLogger(__name__)
 

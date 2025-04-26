@@ -11,7 +11,10 @@ from dotenv import load_dotenv
 logger = logging.getLogger(__name__)
 
 class Config:
-    """Simple configuration class that loads from environment variables."""
+    """Simple configuration class that loads from environment variables.
+    
+    This is a singleton class - only one instance will be created and shared across the application.
+    """
     
     def __init__(self):
         # Get the absolute path to the .env file in the project root
@@ -62,7 +65,7 @@ class Config:
         # Telegram bot settings
         self.telegram_bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
         if not self.telegram_bot_token:
-            logger.warning("TELEGRAM_BOT_TOKEN not found in environment variables")
+            logger.error("TELEGRAM_BOT_TOKEN not found in environment variables")
         else:
             logger.info("Loaded TELEGRAM_BOT_TOKEN")
         
@@ -73,10 +76,19 @@ class Config:
         self._log_config()
     
     def validate(self) -> bool:
-        """Validate the configuration."""
+        """Validate the configuration.
+        
+        Returns:
+            bool: True if the configuration is valid, False otherwise.
+        """
         if not self.linkedin_email or not self.linkedin_password:
             logger.error("LinkedIn credentials are not configured")
             return False
+            
+        if not self.telegram_bot_token:
+            logger.error("Telegram bot token is not configured")
+            return False
+            
         return True
     
     def _log_config(self):
@@ -90,5 +102,5 @@ class Config:
         if self.enable_notifications:
             logger.info(f"Notification Email: {self.notification_email}")
 
-# Create a global instance
+# Create a singleton instance
 config = Config() 

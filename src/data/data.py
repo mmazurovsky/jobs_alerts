@@ -4,12 +4,13 @@ Data models and enums for the application.
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 from apscheduler.triggers.cron import CronTrigger
 
 class TimePeriod(Enum):
     """Time periods for job search."""
+    MINUTES_5 = 300    # 5 minutes
     MINUTES_15 = 900   # 15 minutes
     MINUTES_30 = 1800  # 30 minutes
     MINUTES_60 = 3600  # 1 hour
@@ -27,7 +28,10 @@ class TimePeriod(Enum):
     
     def get_cron_trigger(self) -> CronTrigger:
         """Get the appropriate APScheduler CronTrigger for this time period."""
-        if self == TimePeriod.MINUTES_15:
+        if self == TimePeriod.MINUTES_5:
+            # Run at 00, 05, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55 minutes of each hour
+            return CronTrigger(minute='0,5,10,15,20,25,30,35,40,45,50,55')
+        elif self == TimePeriod.MINUTES_15:
             # Run at 00, 15, 30, 45 minutes of each hour
             return CronTrigger(minute='0,15,30,45')
         elif self == TimePeriod.MINUTES_30:
@@ -89,3 +93,27 @@ class JobSearchOut:
     time_period: TimePeriod
     user_id: int  # Telegram user ID
     created_at: datetime
+
+class SentJobsTracker:
+    """Tracks which jobs have been sent to users to prevent duplicates."""
+    def __init__(self):
+        self._sent_jobs: Dict[int, Set[str]] = {}  # user_id -> set of job links
+
+    def mark_job_sent(self, user_id: int, job_link: str) -> None:
+        """Mark a job as sent to a user."""
+        if user_id not in self._sent_jobs:
+            self._sent_jobs[user_id] = set()
+        self._sent_jobs[user_id].add(job_link)
+
+    def is_job_sent(self, user_id: int, job_link: str) -> bool:
+        """Check if a job has already been sent to a user."""
+        return user_id in self._sent_jobs and job_link in self._sent_jobs[user_id]
+
+    def clear_user_jobs(self, user_id: int) -> None:
+        """Clear the sent jobs history for a user."""
+        if user_id in self._sent_jobs:
+            del self._sent_jobs[user_id]
+
+    def clear_all(self) -> None:
+        """Clear all sent jobs history."""
+        self._sent_jobs.clear()
