@@ -1,199 +1,263 @@
 """
-Telegram bot implementation for Jobs Alerts.
+Telegram bot for job search management and notifications.
 """
 import logging
-import os
-from typing import Dict, List, Optional
-
+from typing import List, Optional, Tuple
 from telegram import Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    ContextTypes,
-    MessageHandler,
-    filters,
-)
+from telegram.ext import Application, CommandHandler, ContextTypes
 
-from core.config import config
-from core.linkedin_scraper import JobListing
+from src.data.data import JobListing, JobSearchIn, JobType, RemoteType, TimePeriod
+from src.user.job_search import job_search_manager
 
 logger = logging.getLogger(__name__)
 
-# Store user IDs that have started the bot
-active_users: Dict[int, bool] = {}
-
-async def error_handler(update: Optional[Update], context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle errors in the bot."""
-    logger.error("Exception while handling an update:", exc_info=context.error)
-    if update:
-        await update.message.reply_text("Sorry, something went wrong. Please try again later.")
-
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send a message when the command /start is issued."""
-    user = update.effective_user
-    await update.message.reply_html(
-        f"Hi {user.mention_html()}!\n"
-        "I'm your Jobs Alert bot. I'll notify you about new job postings that match your criteria.\n"
-        "Use /help to see available commands."
-    )
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send a message when the command /help is issued."""
-    await update.message.reply_text(
-        "Available commands:\n"
-        "/start - Start the bot\n"
-        "/help - Show this help message\n"
-        "/search <keywords> [location] - Search for jobs\n"
-        "/subscribe <keywords> [location] - Subscribe to job alerts\n"
-        "/unsubscribe - Unsubscribe from job alerts\n"
-        "/status - Show current subscription status"
-    )
-
-async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Search for jobs with the given keywords and location."""
-    if not context.args:
-        await update.message.reply_text(
-            "Please provide search keywords.\n"
-            "Usage: /search <keywords> [location]\n"
-            "Example: /search 'python developer' 'San Francisco'"
+class TelegramBot:
+    """Telegram bot for job search management."""
+    
+    def __init__(self, token: str):
+        """Initialize the bot with the given token."""
+        self.application = Application.builder().token(token).build()
+        self._setup_handlers()
+    
+    def _setup_handlers(self) -> None:
+        """Set up command handlers."""
+        self.application.add_handler(CommandHandler("start", self._handle_start))
+        self.application.add_handler(CommandHandler("add", self._handle_add))
+        self.application.add_handler(CommandHandler("list", self._handle_list))
+        self.application.add_handler(CommandHandler("remove", self._handle_remove))
+    
+    async def start(self) -> None:
+        """Start the bot."""
+        await self.application.initialize()
+        await self.application.start()
+        await self.application.run_polling()
+    
+    async def stop(self) -> None:
+        """Stop the bot."""
+        await self.application.stop()
+    
+    async def _handle_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle the /start command."""
+        user = update.effective_user
+        welcome_message = (
+            f"Welcome {user.first_name}! 👋\n\n"
+            "I can help you manage your LinkedIn job searches. Here are the available commands:\n\n"
+            "/add - Add a new job search\n"
+            "/list - List your job searches\n"
+            "/remove - Remove a job search"
         )
-        return
-
-    keywords = context.args[0]
-    location = " ".join(context.args[1:]) if len(context.args) > 1 else ""
+        await update.message.reply_text(welcome_message)
     
-    await update.message.reply_text(f"Searching for '{keywords}' jobs in '{location}'...")
+    def _parse_job_types(self, job_types_str: str) -> Tuple[List[JobType], str]:
+        """Parse job types from string input."""
+        job_types = []
+        errors = []
+        
+        for job_type_str in job_types_str.split(','):
+            job_type_str = job_type_str.strip()
+            try:
+                job_type = JobType(job_type_str)
+                job_types.append(job_type)
+            except ValueError:
+                errors.append(f"Invalid job type: {job_type_str}")
+        
+        return job_types, ", ".join(errors) if errors else ""
     
-    # Search for jobs using the scraper
-    async with LinkedInScraper() as scraper:
-        if not await scraper.login():
-            await update.message.reply_text("Failed to connect to LinkedIn. Please try again later.")
-            return
+    def _parse_remote_types(self, remote_types_str: str) -> Tuple[List[RemoteType], str]:
+        """Parse remote types from string input."""
+        remote_types = []
+        errors = []
+        
+        for remote_type_str in remote_types_str.split(','):
+            remote_type_str = remote_type_str.strip()
+            try:
+                remote_type = RemoteType(remote_type_str)
+                remote_types.append(remote_type)
+            except ValueError:
+                errors.append(f"Invalid remote type: {remote_type_str}")
+        
+        return remote_types, ", ".join(errors) if errors else ""
+    
+    def _parse_time_period(self, time_period_str: str) -> Tuple[Optional[TimePeriod], str]:
+        """Parse time period from string input."""
+        try:
+            time_period = TimePeriod[time_period_str.upper()]
+            return time_period, ""
+        except (KeyError, ValueError):
+            return None, f"Invalid time period: {time_period_str}"
+    
+    async def _handle_add(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle the /add command."""
+        try:
+            # Check if we have all required arguments
+            if len(context.args) < 5:
+                await update.message.reply_text(
+                    "Please provide all required parameters.\n"
+                    "Usage: /add \"Job Title\" \"Location\" \"Job Types\" \"Remote Types\" \"Time Period\"\n\n"
+                    "Job Types (comma-separated): Full-time, Part-time, Contract, Temporary, Internship\n"
+                    "Remote Types (comma-separated): On-site, Remote, Hybrid\n"
+                    "Time Period: MINUTES_5, MINUTES_10, MINUTES_15, MINUTES_30, MINUTES_60, HOURS_4\n\n"
+                    "Example: /add \"Software Engineer\" \"San Francisco\" \"Full-time,Contract\" \"Remote,Hybrid\" \"MINUTES_15\""
+                )
+                return
             
-        jobs = await scraper.search_jobs(keywords, location)
-        if not jobs:
-            await update.message.reply_text("No jobs found matching your criteria.")
-            return
+            # Parse arguments
+            job_title = context.args[0].strip('"')
+            location = context.args[1].strip('"')
+            job_types_str = context.args[2].strip('"')
+            remote_types_str = context.args[3].strip('"')
+            time_period_str = context.args[4].strip('"')
             
-        # Send job listings
-        for job in jobs[:5]:  # Limit to 5 jobs to avoid spam
-            message = (
-                f"🔍 *{job.title}*\n"
-                f"🏢 {job.company}\n"
-                f"📍 {job.location}\n"
-                f"🔗 [View Job]({job.link})\n\n"
-                f"{job.description[:200]}..."  # Truncate description
+            # Validate job types
+            job_types, job_types_error = self._parse_job_types(job_types_str)
+            if job_types_error:
+                await update.message.reply_text(
+                    f"Error parsing job types: {job_types_error}\n"
+                    "Valid job types are: Full-time, Part-time, Contract, Temporary, Internship"
+                )
+                return
+            
+            # Validate remote types
+            remote_types, remote_types_error = self._parse_remote_types(remote_types_str)
+            if remote_types_error:
+                await update.message.reply_text(
+                    f"Error parsing remote types: {remote_types_error}\n"
+                    "Valid remote types are: On-site, Remote, Hybrid"
+                )
+                return
+            
+            # Validate time period
+            time_period, time_period_error = self._parse_time_period(time_period_str)
+            if time_period_error:
+                await update.message.reply_text(
+                    f"Error parsing time period: {time_period_error}\n"
+                    "Valid time periods are: MINUTES_5, MINUTES_10, MINUTES_15, MINUTES_30, MINUTES_60, HOURS_4"
+                )
+                return
+            
+            # Create new job search
+            new_search = JobSearchIn(
+                job_title=job_title,
+                location=location,
+                job_types=job_types,
+                remote_types=remote_types,
+                time_period=time_period,
+                user_id=update.effective_user.id
             )
-            await update.message.reply_markdown_v2(message)
             
-        if len(jobs) > 5:
+            # Add job search
+            job_search = job_search_manager.add_job_search(new_search)
+            
+            # Send confirmation message
             await update.message.reply_text(
-                f"Found {len(jobs)} jobs in total. Showing first 5 results."
+                f"Added new job search:\n"
+                f"Title: {job_search.job_title}\n"
+                f"Location: {job_search.location}\n"
+                f"Job Types: {', '.join(jt.value for jt in job_search.job_types)}\n"
+                f"Remote Types: {', '.join(rt.value for rt in job_search.remote_types)}\n"
+                f"Time Period: {job_search.time_period.name}\n"
+                f"ID: {job_search.id}"
             )
-
-async def setup_bot() -> Application:
-    """Set up the Telegram bot with all handlers."""
-    if not config.telegram_bot_token:
-        logger.error("Telegram bot token not configured")
-        return None
-        
-    application = Application.builder().token(config.telegram_bot_token).build()
-    
-    # Add command handlers
-    application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("search", search_command))
-    
-    # Add error handler
-    application.add_error_handler(error_handler)
-    
-    # Start the bot
-    await application.initialize()
-    await application.start()
-    
-    return application
-
-async def send_job_notifications(job_title: str, company: str, location: str, job_url: str) -> None:
-    """Send job notifications to subscribed users."""
-    try:
-        if not config.telegram_bot_token:
-            logger.warning("Telegram bot token not configured, skipping notifications")
-            return
             
-        application = Application.builder().token(config.telegram_bot_token).build()
-        
-        message = (
-            f"🔔 *New Job Alert*\n\n"
-            f"🔍 *{job_title}*\n"
-            f"🏢 {company}\n"
-            f"📍 {location}\n"
-            f"🔗 [View Job]({job_url})"
-        )
-        
-        # TODO: Implement user subscription storage and send to all subscribed users
-        # For now, just log the notification
-        logger.info(f"Would send notification: {message}")
-        
-    except Exception as e:
-        logger.error(f"Failed to send job notification: {e}")
-
-async def send_broadcast_message(message: str) -> None:
-    """Send a broadcast message to all active users."""
-    try:
-        if not config.telegram_bot_token:
-            logger.warning("Telegram bot token not configured, skipping broadcast")
-            return
+        except Exception as e:
+            logger.error(f"Error adding job search: {e}")
+            await update.message.reply_text("Sorry, there was an error adding your job search.")
+    
+    async def _handle_list(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle the /list command."""
+        try:
+            user_id = update.effective_user.id
+            job_searches = job_search_manager.get_user_job_searches(user_id)
             
-        application = Application.builder().token(config.telegram_bot_token).build()
-        await application.initialize()
-        
-        # TODO: Implement user subscription storage and send to all subscribed users
-        # For now, just log the message
-        logger.info(f"Would broadcast message: {message}")
-        
-        await application.stop()
-        
-    except Exception as e:
-        logger.error(f"Failed to send broadcast message: {e}")
-
-async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Stop sending job alerts to the user."""
-    user_id = update.effective_user.id
+            if not job_searches:
+                await update.message.reply_text("You don't have any job searches yet.")
+                return
+            
+            message = "Your job searches:\n\n"
+            for search in job_searches:
+                message += (
+                    f"Title: {search.job_title}\n"
+                    f"Location: {search.location}\n"
+                    f"Job Types: {', '.join(jt.value for jt in search.job_types)}\n"
+                    f"Remote Types: {', '.join(rt.value for rt in search.remote_types)}\n"
+                    f"Time Period: {search.time_period.name}\n"
+                    f"ID: {search.id}\n\n"
+                )
+            
+            await update.message.reply_text(message)
+            
+        except Exception as e:
+            logger.error(f"Error listing job searches: {e}")
+            await update.message.reply_text("Sorry, there was an error listing your job searches.")
     
-    if user_id in active_users:
-        del active_users[user_id]
-        await update.message.reply_text(
-            "You will no longer receive job alerts. Use /start to resume."
-        )
-        logger.info(f"User {user_id} stopped the bot")
-    else:
-        await update.message.reply_text(
-            "You're not currently receiving alerts. Use /start to begin."
-        )
-
-async def send_job_notification(user_id: int, job: JobListing) -> None:
-    """Send a job notification to a specific user.
+    async def _handle_remove(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle the /remove command."""
+        try:
+            if not context.args:
+                await update.message.reply_text(
+                    "Please provide the job search ID.\n"
+                    "Usage: /remove <job_search_id>"
+                )
+                return
+            
+            search_id = context.args[0]
+            user_id = update.effective_user.id
+            
+            if job_search_manager.remove_job_search(user_id, search_id):
+                await update.message.reply_text(f"Removed job search with ID: {search_id}")
+            else:
+                await update.message.reply_text("Job search not found.")
+            
+        except Exception as e:
+            logger.error(f"Error removing job search: {e}")
+            await update.message.reply_text("Sorry, there was an error removing your job search.")
     
-    Args:
-        user_id: The Telegram user ID to send the notification to
-        job: The JobListing instance containing job details
-    """
-    if user_id not in active_users:
-        logger.info(f"Skipping notification for inactive user {user_id}")
-        return
-    
-    try:
-        bot = Application.builder().token(os.getenv("TELEGRAM_BOT_TOKEN")).build().bot
-        
-        message = (
-            f"🔔 New Job Alert!\n\n"
-            f"📋 {job.title}\n"
-            f"🏢 {job.company}\n"
-            f"📍 {job.location}\n\n"
-            f"🔗 {job.job_url}"
+    def _format_job_listing(self, job: JobListing) -> str:
+        """Format a single job listing as a string."""
+        return (
+            f"Title: {job.title}\n"
+            f"Company: {job.company}\n"
+            f"Location: {job.location}\n"
+            f"Type: {job.job_type}\n"
+            f"Link: {job.link}\n\n"
         )
+    
+    async def send_job_listings(self, user_id: int, jobs: List[JobListing]) -> None:
+        """Send job listings to a user."""
+        if not jobs:
+            return
         
-        await bot.send_message(chat_id=user_id, text=message)
-        logger.info(f"Sent job notification to user {user_id}")
-    except Exception as e:
-        logger.error(f"Failed to send notification to user {user_id}: {e}") 
+        try:
+            # Maximum message length (Telegram has a 4096 character limit)
+            MAX_MESSAGE_LENGTH = 4000
+            
+            # Prepare messages
+            messages = []
+            current_message = "New jobs found:\n\n"
+            
+            for job in jobs:
+                job_text = self._format_job_listing(job)
+                
+                # Check if adding this job would exceed the limit
+                if len(current_message) + len(job_text) > MAX_MESSAGE_LENGTH:
+                    # Add current message to the list and start a new one
+                    messages.append(current_message)
+                    current_message = "New jobs found (continued):\n\n"
+                
+                # Add the job to the current message
+                current_message += job_text
+            
+            # Add the last message if it contains any jobs
+            if len(current_message) > len("New jobs found:\n\n"):
+                messages.append(current_message)
+            
+            # Send all messages
+            for message in messages:
+                await self.application.bot.send_message(
+                    chat_id=user_id,
+                    text=message,
+                    disable_web_page_preview=True
+                )
+                
+        except Exception as e:
+            logger.error(f"Error sending job listings to user {user_id}: {e}") 

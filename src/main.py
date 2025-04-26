@@ -9,9 +9,10 @@ from pathlib import Path
 
 from core.config import config
 from core.linkedin_scraper import LinkedInScraper
-from schedulers.job_scheduler import start_scheduler, stop_scheduler
+from schedulers.job_search_scheduler import JobSearchScheduler
 from utils.logging_config import setup_logging
-from bot.telegram_bot import setup_bot, send_job_notifications
+from bot.telegram_bot import TelegramBot
+from user.job_search import job_search_manager, set_scheduler
 
 # Configure logging
 logging.basicConfig(
@@ -20,49 +21,60 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Global instances
+telegram_bot = None
+job_search_scheduler = None
+
 async def run_application():
     """
     Run the application.
     """
+    global telegram_bot, job_search_scheduler
+    
     # Validate configuration
     if not config.validate():
         logger.error("Invalid configuration. Exiting...")
         return
     
-    # Start the Telegram bot
-    application = await setup_bot()
-    if not application:
-        logger.error("Failed to start Telegram bot")
-        return
-
+    # Initialize the Telegram bot
+    telegram_bot = TelegramBot(config.telegram_token)
+    
     # Verify login first
     async with LinkedInScraper() as scraper:
         login_successful = await scraper.login()
         if not login_successful:
             logger.error("Login verification failed. Exiting...")
-            await application.stop()
             return
         else:
             logger.info("Successfully logged in to LinkedIn")
-            # Example search parameters - you can make these configurable
-            keywords = "solution architect"
-            location = "Germany"
             
-            jobs = await scraper.search_jobs(keywords, location)
-            logger.info(f"Found {len(jobs)} jobs")
+            # Initialize the job search scheduler
+            job_search_scheduler = JobSearchScheduler(scraper, telegram_bot)
             
-            if jobs:
-                # Send notifications for each job
-                for job in jobs:
-                    await send_job_notifications(
-                        job_title=job.title,
-                        company=job.company,
-                        location=job.location,
-                        job_url=job.link
-                    )
+            # Connect the scheduler to the job search manager
+            set_scheduler(job_search_scheduler)
+            
+            # Start the job search scheduler
+            await job_search_scheduler.start()
+            logger.info("Job search scheduler started")
     
-    # Start polling for Telegram updates
-    await application.run_polling()
+    # Start the Telegram bot
+    await telegram_bot.start()
+    logger.info("Telegram bot started")
+
+async def shutdown():
+    """Shutdown the application gracefully."""
+    global telegram_bot, job_search_scheduler
+    
+    logger.info("Shutting down application...")
+    
+    if job_search_scheduler:
+        await job_search_scheduler.stop()
+        logger.info("Job search scheduler stopped")
+    
+    if telegram_bot:
+        await telegram_bot.stop()
+        logger.info("Telegram bot stopped")
 
 def main():
     """
@@ -75,7 +87,7 @@ def main():
     # Set up signal handlers
     loop = asyncio.get_event_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, lambda: asyncio.create_task(stop_scheduler()))
+        loop.add_signal_handler(sig, lambda: asyncio.create_task(shutdown()))
     
     try:
         # Debug logging for environment variables

@@ -6,10 +6,10 @@ from datetime import datetime
 from enum import Enum
 from typing import Dict, List, Optional
 
+from apscheduler.triggers.cron import CronTrigger
+
 class TimePeriod(Enum):
     """Time periods for job search."""
-    MINUTES_5 = 300    # 5 minutes
-    MINUTES_10 = 600   # 10 minutes
     MINUTES_15 = 900   # 15 minutes
     MINUTES_30 = 1800  # 30 minutes
     MINUTES_60 = 3600  # 1 hour
@@ -23,7 +23,25 @@ class TimePeriod(Enum):
     @property
     def f_tpr_param(self) -> str:
         """Get the f_TPR parameter value for LinkedIn URL."""
-        return f"r{this.seconds}"
+        return f"r{self.seconds}"
+    
+    def get_cron_trigger(self) -> CronTrigger:
+        """Get the appropriate APScheduler CronTrigger for this time period."""
+        if self == TimePeriod.MINUTES_15:
+            # Run at 00, 15, 30, 45 minutes of each hour
+            return CronTrigger(minute='0,15,30,45')
+        elif self == TimePeriod.MINUTES_30:
+            # Run at 00 and 30 minutes of each hour
+            return CronTrigger(minute='0,30')
+        elif self == TimePeriod.MINUTES_60:
+            # Run at the top of each hour
+            return CronTrigger(minute='0')
+        elif self == TimePeriod.HOURS_4:
+            # Run at 00:00, 04:00, 08:00, 12:00, 16:00, 20:00
+            return CronTrigger(hour='0,4,8,12,16,20', minute='0')
+        else:
+            # Default to running every 15 minutes
+            return CronTrigger(minute='0,15,30,45')
 
 class JobType(Enum):
     """Types of jobs."""
@@ -51,7 +69,7 @@ class JobListing:
     timestamp: str
 
 @dataclass
-class NewJobSearch:
+class JobSearchIn:
     """Data for creating a new job search."""
     job_title: str
     location: str
@@ -61,7 +79,7 @@ class NewJobSearch:
     user_id: int  # Telegram user ID
 
 @dataclass
-class JobSearchData:
+class JobSearchOut:
     """Configuration for a job search."""
     id: str  # Required unique identifier for the job search
     job_title: str
