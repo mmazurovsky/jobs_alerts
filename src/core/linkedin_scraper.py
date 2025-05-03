@@ -10,7 +10,7 @@ from pathlib import Path
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext, ElementHandle
 
 from src.core.config import config
-from src.data.data import JobListing
+from src.data.data import JobListing, TimePeriod
 
 logger = logging.getLogger(__name__)
 
@@ -134,10 +134,20 @@ class LinkedInScraper:
             logger.error(f"Login failed: {str(e)}")
             return False
             
-    async def _navigate_to_jobs_page(self):
-        """Navigate to LinkedIn jobs search page."""
+    async def _navigate_to_jobs_page(self, time_period_seconds: Optional[int] = None):
+        """Navigate to LinkedIn jobs search page.
+        
+        Args:
+            time_period_seconds: Optional time period in seconds to filter jobs by
+        """
         logger.info("Navigating to LinkedIn jobs search page...")
-        await self.page.goto("https://www.linkedin.com/jobs/search/")
+        base_url = "https://www.linkedin.com/jobs/search/"
+        
+        # Add time period filter to URL if provided
+        if time_period_seconds:
+            base_url += f"?f_TPR=r{time_period_seconds}"
+            
+        await self.page.goto(base_url)
         await asyncio.sleep(1.5)  # Wait for page to stabilize
 
     async def _fill_search_inputs(self, keywords: str, location: Optional[str] = None):
@@ -274,6 +284,7 @@ class LinkedInScraper:
         await asyncio.sleep(2)
         
         job_cards = []
+        seen_job_ids = set()  # Track seen job IDs
         last_height = 0
         scroll_attempts = 0
         max_scroll_attempts = 10
@@ -283,10 +294,28 @@ class LinkedInScraper:
             current_cards = await self.page.query_selector_all("div.job-card-container")
             logger.info(f"Found {len(current_cards)} job cards in current view")
             
-            # Update job cards list with new cards
+            # Update job cards list with new unique cards
             for card in current_cards:
-                if card not in job_cards:
-                    job_cards.append(card)
+                try:
+                    # Get the job ID from the card
+                    title_link = await card.query_selector('a.job-card-list__title--link')
+                    if not title_link:
+                        continue
+                        
+                    href = await title_link.get_attribute('href')
+                    if not href or '/jobs/view/' not in href:
+                        continue
+                        
+                    job_id = href.split('/jobs/view/')[1].split('/')[0].split('?')[0]
+                    
+                    # Only add the card if we haven't seen this job ID before
+                    if job_id not in seen_job_ids:
+                        seen_job_ids.add(job_id)
+                        job_cards.append(card)
+                        logger.info(f"Added new unique job card with ID: {job_id}")
+                except Exception as e:
+                    logger.warning(f"Error extracting job ID from card: {e}")
+                    continue
                     
             logger.info(f"Total unique job cards found: {len(job_cards)}")
                     
@@ -311,7 +340,7 @@ class LinkedInScraper:
                 scroll_attempts = 0
                 last_height = new_height
                 
-        logger.info(f"Final count: Found {len(job_cards)} job cards after scrolling")
+        logger.info(f"Final count: Found {len(job_cards)} unique job cards after scrolling")
         return job_cards[:max_jobs] if max_jobs is not None else job_cards
 
     async def _extract_job_details(self, card) -> Optional[JobListing]:
@@ -499,11 +528,13 @@ class LinkedInScraper:
                         "Full-time": "F",
                         "Part-time": "P",
                         "Contract": "C",
-                        "Temporary": "T"
+                        "Temporary": "T",
+                        "Internship": "I"
                     }
                     
-                    if job_type in job_type_map:
-                        value = job_type_map[job_type]
+                    job_type_value = job_type.value if hasattr(job_type, 'value') else job_type
+                    if job_type_value in job_type_map:
+                        value = job_type_map[job_type_value]
                         label_selector = f'label[for="advanced-filter-jobType-{value}"]'
                         
                         # Find and click the label
@@ -520,7 +551,7 @@ class LinkedInScraper:
                                 if not is_checked:
                                     await label.click()
                                     await asyncio.sleep(0.5)
-                                    logger.info(f"Applied job type filter: {job_type}")
+                                    logger.info(f"Applied job type filter: {job_type_value}")
             
             # Apply remote type filters if provided
             if remote_types:
@@ -532,8 +563,9 @@ class LinkedInScraper:
                         "Remote": "2"
                     }
                     
-                    if remote_type in remote_type_map:
-                        value = remote_type_map[remote_type]
+                    remote_type_value = remote_type.value if hasattr(remote_type, 'value') else remote_type
+                    if remote_type_value in remote_type_map:
+                        value = remote_type_map[remote_type_value]
                         label_selector = f'label[for="advanced-filter-workplaceType-{value}"]'
                         
                         # Find and click the label
@@ -550,7 +582,7 @@ class LinkedInScraper:
                                 if not is_checked:
                                     await label.click()
                                     await asyncio.sleep(0.5)
-                                    logger.info(f"Applied remote type filter: {remote_type}")
+                                    logger.info(f"Applied remote type filter: {remote_type_value}")
             
             # Click the "Show results" button
             show_results_button = await self.page.wait_for_selector(
@@ -572,9 +604,9 @@ class LinkedInScraper:
             logger.error(f"Error applying filters: {str(e)}")
             return False
 
-    async def search_jobs(self, keywords: str, location: Optional[str] = None, max_pages: int = 2, 
+    async def search_jobs(self, keywords: str, location: Optional[str] = None, max_pages: int = 10, 
                          job_types: Optional[List[str]] = None, remote_types: Optional[List[str]] = None,
-                         max_jobs: Optional[int] = None) -> List[JobListing]:
+                         time_period: Optional[TimePeriod] = None, max_jobs: Optional[int] = None) -> List[JobListing]:
         """Search for jobs on LinkedIn using the provided keywords and location.
         
         Args:
@@ -583,6 +615,7 @@ class LinkedInScraper:
             max_pages: Maximum number of pages to scrape (default: 2)
             job_types: Optional list of job types to filter by
             remote_types: Optional list of remote types to filter by
+            time_period: Optional TimePeriod enum to filter jobs by
             max_jobs: Optional maximum number of jobs to scrape (default: None, meaning no limit)
         """
         if not self.page:
@@ -592,8 +625,9 @@ class LinkedInScraper:
         current_page = 1
         
         try:
-            # Initial search
-            await self._navigate_to_jobs_page()
+            # Initial search with time period filter
+            time_period_seconds = time_period.seconds if time_period else None
+            await self._navigate_to_jobs_page(time_period_seconds)
             await self._fill_search_inputs(keywords, location)
             await self._click_search_button()
             
@@ -603,6 +637,13 @@ class LinkedInScraper:
                 filter_success = await self._apply_filters(job_types, remote_types)
                 if not filter_success:
                     logger.warning("Failed to apply filters, continuing with unfiltered results")
+                
+            # Check for no results banner after applying filters
+            await asyncio.sleep(2)  # Wait for results to update
+            no_results_banner = await self.page.query_selector('.jobs-search-no-results-banner__image')
+            if no_results_banner:
+                logger.info("No jobs found matching the search criteria")
+                return []
             
             while current_page <= max_pages:
                 logger.info(f"Processing page {current_page} of {max_pages}")
