@@ -1,304 +1,398 @@
 """
-Telegram bot implementation for job search notifications.
+Telegram bot module.
 """
 import logging
-from typing import List, Optional, Tuple
-
+import os
+from typing import Dict, List, Optional
 from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
     ContextTypes,
+    ConversationHandler,
     MessageHandler,
-    filters
+    filters,
 )
-from telegram.error import TelegramError
+from telegram.constants import ParseMode
+from datetime import datetime
+import asyncio
 
+from src.core.config import Config
+from src.core.linkedin_scraper import LinkedInScraper
 from src.data.data import (
-    JobSearchIn,
-    JobSearchOut,
-    JobListing,
-    JobType,
-    RemoteType,
-    TimePeriod
+    JobSearchOut, JobListing, JobSearchIn, JobType, RemoteType, TimePeriod,
+    StreamType, StreamEvent, StreamManager, JobSearchRemove
 )
-from src.user.job_search import job_search_manager
+from src.data.mongo_manager import MongoManager
 
 logger = logging.getLogger(__name__)
 
+# Conversation states
+TITLE, LOCATION, JOB_TYPES, REMOTE_TYPES, TIME_PERIOD, CONFIRM = range(6)
+
 class TelegramBot:
-    def __init__(self, token: str):
-        """Initialize the Telegram bot.
-        
-        Args:
-            token: Telegram bot token
-        """
+    """Telegram bot for managing job searches."""
+    
+    def __init__(self, token: str, mongo_manager: MongoManager, stream_manager: StreamManager):
+        """Initialize the bot with token and MongoDB manager."""
         self.token = token
+        self.mongo_manager = mongo_manager
+        self.stream_manager = stream_manager
         self.application = Application.builder().token(token).build()
         self._setup_handlers()
+
+        # Subscribe to send message stream
+        self.stream_manager.get_stream(StreamType.SEND_MESSAGE).subscribe(
+            lambda event: asyncio.create_task(self._handle_send_message(event))
+        )
     
     def _setup_handlers(self):
-        """Set up command and message handlers."""
+        """Set up all command and conversation handlers."""
         # Command handlers
-        self.application.add_handler(CommandHandler("start", self._handle_start))
-        self.application.add_handler(CommandHandler("add", self._handle_add))
-        self.application.add_handler(CommandHandler("list", self._handle_list))
-        self.application.add_handler(CommandHandler("remove", self._handle_remove))
+        self.application.add_handler(CommandHandler("start", self.start))
+        self.application.add_handler(CommandHandler("help", self.help))
+        self.application.add_handler(CommandHandler("list", self.list_searches))
+        self.application.add_handler(CommandHandler("delete", self.delete_search))
+        self.application.add_handler(CommandHandler("newRaw", self.new_raw_search))
         
-        # Error handler
-        self.application.add_error_handler(self._handle_error)
-    
-    def _get_command_help(self) -> str:
-        """Get formatted help text with available options and example.
-        
-        Returns:
-            Formatted help text with command usage, available options, and example.
-        """
-        # Format enum values with descriptions
-        job_types = "\n".join(f"• {t.name} ({t.value})" for t in JobType)
-        remote_types = "\n".join(f"• {t.name} ({t.value})" for t in RemoteType)
-        time_periods = "\n".join(f"• {t.name} ({t.seconds//60} minutes)" for t in TimePeriod)
-        
-        return (
-            "Command format:\n"
-            "/add <job_title>;<location>;<job_types>;<remote_types>;<time_period>\n\n"
-            "Example:\n"
-            "/add Software Engineer;San Francisco;FULL_TIME,PART_TIME;REMOTE,HYBRID;MINUTES_30\n\n"
-            "Available options:\n\n"
-            "Job Types:\n"
-            f"{job_types}\n\n"
-            "Remote Types:\n"
-            f"{remote_types}\n\n"
-            "Time Periods:\n"
-            f"{time_periods}\n\n"
-            "Note: Use commas (,) to separate multiple values for job types and remote types."
+        # Conversation handler for creating new job searches
+        conv_handler = ConversationHandler(
+            entry_points=[CommandHandler("new", self.new_search)],
+            states={
+                TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.title)],
+                LOCATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.location)],
+                JOB_TYPES: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.job_types)],
+                REMOTE_TYPES: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.remote_types)],
+                TIME_PERIOD: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.time_period)],
+                CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.confirm)],
+            },
+            fallbacks=[
+                CommandHandler("cancel", self.cancel),
+                CommandHandler("new", self.new_search),
+                CommandHandler("list", self.list_searches),
+                CommandHandler("delete", self.delete_search),
+                CommandHandler("help", self.help),
+                CommandHandler("start", self.start)
+            ],
+            per_message=False
         )
+        self.application.add_handler(conv_handler)
     
-    async def _handle_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle the /start command."""
-        user_id = update.effective_user.id
-        logger.info(f"User {user_id} started the bot")
-        
-        welcome_message = (
-            "👋 Welcome to the LinkedIn Job Alerts Bot!\n\n"
-            "I can help you track job opportunities on LinkedIn. Here are the available commands:\n\n"
-            "/add - Add a new job search\n"
-            "/list - List your active job searches\n"
-            "/remove <job_title> - Remove a job search\n\n"
-            f"{self._get_command_help()}"
-        )
-        
-        await update.message.reply_text(welcome_message)
-    
-    def _parse_job_types(self, job_types_str: str) -> Tuple[List[JobType], str]:
-        """Parse job types from string input.
-        
-        Args:
-            job_types_str: Comma-separated list of job types
-            
-        Returns:
-            Tuple of (list of job types, error message if any)
-        """
-        job_types = []
-        errors = []
-        
-        for job_type_str in job_types_str.split(','):
-            job_type_str = job_type_str.strip()
-            try:
-                job_type = JobType[job_type_str]
-                job_types.append(job_type)
-            except KeyError:
-                errors.append(f"Invalid job type: {job_type_str}")
-        
-        return job_types, ", ".join(errors) if errors else ""
-    
-    def _parse_remote_types(self, remote_types_str: str) -> Tuple[List[RemoteType], str]:
-        """Parse remote types from string input.
-        
-        Args:
-            remote_types_str: Comma-separated list of remote types
-            
-        Returns:
-            Tuple of (list of remote types, error message if any)
-        """
-        remote_types = []
-        errors = []
-        
-        for remote_type_str in remote_types_str.split(','):
-            remote_type_str = remote_type_str.strip()
-            try:
-                remote_type = RemoteType[remote_type_str]
-                remote_types.append(remote_type)
-            except KeyError:
-                errors.append(f"Invalid remote type: {remote_type_str}")
-        
-        return remote_types, ", ".join(errors) if errors else ""
-    
-    def _parse_time_period(self, time_period_str: str) -> Tuple[Optional[TimePeriod], str]:
-        """Parse time period from string input.
-        
-        Args:
-            time_period_str: Time period string
-            
-        Returns:
-            Tuple of (time period if valid, error message if any)
-        """
-        try:
-            time_period = TimePeriod[time_period_str]
-            return time_period, ""
-        except KeyError:
-            return None, f"Invalid time period: {time_period_str}"
-    
-    async def _handle_add(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle the /add command."""
-        user_id = update.effective_user.id
-        
-        # Check if command has arguments
-        if not context.args:
-            await update.message.reply_text(
-                "❌ Please provide all required parameters:\n\n"
-                f"{self._get_command_help()}"
-            )
-            return
-        
-        # Join arguments and split by semicolon
-        args = " ".join(context.args)
-        parts = [part.strip() for part in args.split(';')]
-        
-        if len(parts) != 5:
-            await update.message.reply_text(
-                "❌ Please provide all required parameters separated by semicolons (;):\n\n"
-                f"{self._get_command_help()}"
-            )
-            return
-        
-        job_title, location, job_types_str, remote_types_str, time_period_str = parts
-        
-        # Validate job types
-        job_types, job_types_error = self._parse_job_types(job_types_str)
-        if job_types_error:
-            await update.message.reply_text(
-                f"❌ Error parsing job types: {job_types_error}\n"
-                f"Valid job types are: {', '.join(t.name for t in JobType)}"
-            )
-            return
-        
-        # Validate remote types
-        remote_types, remote_types_error = self._parse_remote_types(remote_types_str)
-        if remote_types_error:
-            await update.message.reply_text(
-                f"❌ Error parsing remote types: {remote_types_error}\n"
-                f"Valid remote types are: {', '.join(t.name for t in RemoteType)}"
-            )
-            return
-        
-        # Validate time period
-        time_period, time_period_error = self._parse_time_period(time_period_str)
-        if time_period_error:
-            await update.message.reply_text(
-                f"❌ {time_period_error}\n"
-                f"Valid time periods are: {', '.join(t.name for t in TimePeriod)}"
-            )
-            return
-        
-        # Create new job search
-        new_search = JobSearchIn(
-            user_id=user_id,
-            job_title=job_title,
-            location=location,
-            job_types=job_types,
-            remote_types=remote_types,
-            time_period=time_period
-        )
-        
-        # Add job search
-        job_search_manager.add_job_search(new_search)
-        
-        # Send confirmation
+    # Command handlers
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Send a message when the command /start is issued."""
+        self._clear_conversation_state(context)
+        user = update.effective_user
         await update.message.reply_text(
-            f"✅ Added job search:\n"
-            f"Title: {job_title}\n"
-            f"Location: {location}\n"
-            f"Job Types: {', '.join(t.name for t in job_types)}\n"
-            f"Remote Types: {', '.join(t.name for t in remote_types)}\n"
-            f"Time Period: {time_period.name}"
+            f"Hi {user.first_name}! I'm your job search assistant. "
+            "Use /help to see available commands."
         )
     
-    async def _handle_list(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle the /list command."""
-        user_id = update.effective_user.id
-        searches = job_search_manager.get_user_job_searches(user_id)
-        
-        if not searches:
-            await update.message.reply_text("You don't have any job searches configured.")
-            return
-        
-        message = "Your job searches:\n\n"
-        for search in searches:
-            message += (
-                f"🔍 ID: {search.id}\n"
-                f"Title: {search.job_title}\n"
-                f"Location: {search.location}\n"
-                f"Job Types: {', '.join(t.name for t in search.job_types)}\n"
-                f"Remote Types: {', '.join(t.name for t in search.remote_types)}\n"
-                f"Time Period: {search.time_period.name}\n\n"
-            )
-        
-        await update.message.reply_text(message)
+    async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Send a message when the command /help is issued."""
+        self._clear_conversation_state(context)
+        help_text = (
+            "Available commands:\n"
+            "/new - Create a new job search\n"
+            "/list - List your job searches\n"
+            "/delete - Delete a job search\n"
+            "/help - Show this help message"
+        )
+        await update.message.reply_text(help_text)
     
-    async def _handle_remove(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle the /remove command."""
-        user_id = update.effective_user.id
-        
-        if not context.args:
+    async def list_searches(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """List all job searches for the user."""
+        self._clear_conversation_state(context)
+        try:
+            from src.core.container import get_container
+            container = get_container()
+            searches = await container.job_search_manager.get_user_searches(update.effective_user.id)
+            
+            if not searches:
+                await update.message.reply_text("You don't have any job searches yet.")
+                return
+                
+            message = "Your job searches:\n\n"
+            for search in searches:
+                job_types = ", ".join(t.value for t in search.job_types)
+                remote_types = ", ".join(t.value for t in search.remote_types)
+                message += (
+                    f"ID: {search.id}\n"
+                    f"Title: {search.title}\n"
+                    f"Location: {search.location}\n"
+                    f"Job Types: {job_types}\n"
+                    f"Remote Types: {remote_types}\n"
+                    f"Check Frequency: {search.time_period.value}\n"
+                    f"Last Check: {search.last_check}\n\n"
+                )
+                
+            await update.message.reply_text(message)
+            
+        except Exception as e:
+            logger.error(f"Error listing job searches: {e}")
             await update.message.reply_text(
-                "❌ Please provide a search ID to remove:\n"
-                "/remove <search_id>"
-            )
-            return
-        
-        search_id = context.args[0]
-        
-        if job_search_manager.remove_job_search(user_id, search_id):
-            await update.message.reply_text(f"✅ Removed job search with ID '{search_id}'")
-        else:
-            await update.message.reply_text(f"❌ Job search with ID '{search_id}' not found")
-    
-    async def _handle_error(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle errors in the bot."""
-        logger.error(f"Update {update} caused error {context.error}")
-        
-        if update and update.effective_message:
-            await update.effective_message.reply_text(
-                "Sorry, an error occurred while processing your request."
+                "Sorry, there was an error listing your job searches. Please try again."
             )
     
-    async def initialize(self):
+    async def delete_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Delete a job search."""
+        self._clear_conversation_state(context)
+        try:
+            args = context.args
+            if not args:
+                await update.message.reply_text(
+                    "Please provide a job search ID to delete. Usage: /delete <search_id>"
+                )
+                return
+                
+            search_id = args[0]
+            
+            # Publish job search removal event
+            self.stream_manager.publish(StreamEvent(
+                type=StreamType.JOB_SEARCH_REMOVE,
+                data=JobSearchRemove(
+                    user_id=update.effective_user.id,
+                    search_id=search_id
+                ).model_dump(mode='json'),
+                source="telegram_bot"
+            ))
+            
+            await update.message.reply_text("Your job search will be removed shortly.")
+            
+        except Exception as e:
+            logger.error(f"Error deleting job search: {e}")
+            await update.message.reply_text(
+                "Sorry, there was an error deleting your job search. Please try again."
+            )
+    
+    # Conversation handlers
+    async def new_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Start the conversation for creating a new job search."""
+        self._clear_conversation_state(context)
+        await update.message.reply_text(
+            "Let's create a new job search! Please enter the job title.\n\n"
+            "Examples:\n"
+            "• Software Engineer\n"
+            "• Data Scientist"
+        )
+        return TITLE
+    
+    async def title(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Handle job title input."""
+        context.user_data['title'] = update.message.text
+        await update.message.reply_text(
+            "Now enter the location where you want to search for jobs.\n\n"
+            "Examples:\n"
+            "• United States\n"
+            "• New York City\n"
+            "• Europe"
+        )
+        return LOCATION
+    
+    async def location(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Handle location input."""
+        context.user_data['location'] = update.message.text
+        
+        # Show available job types and instructions
+        job_types_list = "\n".join(f"• {job_type.value}" for job_type in JobType)
+        await update.message.reply_text(
+            "Select job types (you can choose multiple).\n\n"
+            "Available job types:\n"
+            f"{job_types_list}\n\n"
+            "Enter job types separated by commas, e.g.:\n"
+            "Full-time, Part-time, Contract"
+        )
+        return JOB_TYPES
+    
+    async def job_types(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Handle job types selection."""
+        # Parse job types from input
+        input_text = update.message.text.strip()
+        job_types = [t.strip() for t in input_text.split(',')]
+        
+        # Convert input to JobType enum by matching against values
+        selected_types = []
+        for job_type in job_types:
+            for enum_type in JobType:
+                if job_type.lower() == enum_type.value.lower():
+                    selected_types.append(enum_type)
+                    break
+        
+        context.user_data['job_types'] = selected_types
+        
+        if not context.user_data['job_types']:
+            # Show available job types for reference
+            job_types_list = "\n".join(f"• {job_type.value}" for job_type in JobType)
+            await update.message.reply_text(
+                "No valid job types selected. Please try again with valid job types.\n\n"
+                "Available job types:\n"
+                f"{job_types_list}\n\n"
+                "Enter job types separated by commas, e.g.:\n"
+                "Full-time, Part-time, Contract"
+            )
+            return JOB_TYPES
+            
+        # Show available remote types and instructions
+        remote_types_list = "\n".join(f"• {remote_type.value}" for remote_type in RemoteType)
+        await update.message.reply_text(
+            "Select remote work types (you can choose multiple).\n\n"
+            "Available remote types:\n"
+            f"{remote_types_list}\n\n"
+            "Enter remote types separated by commas, e.g.:\n"
+            "Remote, Hybrid, On-site"
+        )
+        return REMOTE_TYPES
+    
+    async def remote_types(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Handle remote types selection."""
+        # Parse remote types from input
+        input_text = update.message.text.strip()
+        remote_types = [t.strip() for t in input_text.split(',')]
+        
+        # Convert input to RemoteType enum by matching against values
+        selected_types = []
+        for remote_type in remote_types:
+            for enum_type in RemoteType:
+                if remote_type.lower() == enum_type.value.lower():
+                    selected_types.append(enum_type)
+                    break
+        
+        context.user_data['remote_types'] = selected_types
+        
+        if not context.user_data['remote_types']:
+            # Show available remote types for reference
+            remote_types_list = "\n".join(f"• {remote_type.value}" for remote_type in RemoteType)
+            await update.message.reply_text(
+                "No valid remote types selected. Please try again with valid remote types.\n\n"
+                "Available remote types:\n"
+                f"{remote_types_list}\n\n"
+                "Enter remote types separated by commas, e.g.:\n"
+                "Remote, Hybrid, On-site"
+            )
+            return REMOTE_TYPES
+            
+        # Show available time periods and instructions
+        time_periods_list = "\n".join(f"• {period.display_name}" for period in TimePeriod)
+        await update.message.reply_text(
+            "Select how often to check for new jobs.\n\n"
+            "Available time periods:\n"
+            f"{time_periods_list}\n\n"
+            "Enter one of the time periods above, e.g.:\n"
+            "Daily"
+        )
+        return TIME_PERIOD
+    
+    async def time_period(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Handle time period selection."""
+        # Parse time period from input
+        input_text = update.message.text.strip()
+        
+        # Convert input to TimePeriod enum by matching against display names
+        selected_period = None
+        for period in TimePeriod:
+            if input_text.lower() == period.display_name.lower():
+                selected_period = period
+                break
+        
+        if not selected_period:
+            # Show available time periods for reference
+            time_periods_list = "\n".join(f"• {period.display_name}" for period in TimePeriod)
+            await update.message.reply_text(
+                "No valid time period selected. Please try again with a valid time period.\n\n"
+                "Available time periods:\n"
+                f"{time_periods_list}\n\n"
+                "Enter one of the time periods above, e.g.:\n"
+                "5 minutes"
+            )
+            return TIME_PERIOD
+            
+        context.user_data['time_period'] = selected_period
+        
+        # Show confirmation message
+        await update.message.reply_text(
+            "Please confirm your job search by typing 'yes' or cancel by typing 'no'."
+        )
+        
+        return CONFIRM
+    
+    async def confirm(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Handle confirmation of job search creation."""
+        input_text = update.message.text.strip().lower()
+        
+        if input_text == 'no':
+            await update.message.reply_text("Job search creation cancelled.")
+            return ConversationHandler.END
+            
+        if input_text != 'yes':
+            await update.message.reply_text("Please type 'yes' to confirm or 'no' to cancel.")
+            return CONFIRM
+            
+        try:
+            # Publish job search add event
+            self.stream_manager.publish(StreamEvent(
+                type=StreamType.JOB_SEARCH_ADD,
+                data=JobSearchIn(
+                    job_title=context.user_data['title'],
+                    location=context.user_data['location'],
+                    job_types=[t for t in context.user_data['job_types']],
+                    remote_types=[t for t in context.user_data['remote_types']],
+                    time_period=context.user_data['time_period'],
+                    user_id=update.effective_user.id
+                ).model_dump(mode='json'),
+                source="telegram_bot"
+            ))
+            
+            await update.message.reply_text("Your job search has been created and will be processed shortly.")
+            
+        except Exception as e:
+            logger.error(f"Error creating job search: {e}")
+            await update.message.reply_text(
+                "Sorry, there was an error creating your job search. Please try again."
+            )
+            
+        return ConversationHandler.END
+    
+    async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Cancel the conversation."""
+        self._clear_conversation_state(context)
+        await update.message.reply_text("Job search creation cancelled.")
+        return ConversationHandler.END
+    
+    # Utility methods
+    def _clear_conversation_state(self, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Clear the conversation state."""
+        if hasattr(context, 'user_data'):
+            context.user_data.clear()
+    
+    # Bot lifecycle methods
+    def run(self):
+        """Run the bot."""
+        self.application.run_polling()
+    
+    async def initialize(self) -> None:
         """Initialize the bot."""
-        logger.info("Initializing Telegram bot...")
-        await self.application.initialize()
-        logger.info("Telegram bot initialized")
-    
-    async def start_polling(self):
-        """Start the bot's polling."""
-        logger.info("Starting Telegram bot polling...")
-        await self.application.start()
-        await self.application.updater.start_polling()
-        logger.info("Telegram bot polling started")
-    
-    async def stop(self):
+        try:
+            await self.application.initialize()
+            await self.application.start()
+            await self.application.updater.start_polling()
+            logger.info("Telegram bot started successfully")
+        except Exception as e:
+            logger.error(f"Failed to start Telegram bot: {e}")
+            raise
+            
+    async def stop(self) -> None:
         """Stop the bot."""
-        logger.info("Stopping Telegram bot...")
-        await self.application.stop()
-        logger.info("Telegram bot stopped")
-    
-    async def send_job_listings(self, user_id: int, jobs: List[JobListing]):
-        """Send job listings to a user.
-        
-        Args:
-            user_id: Telegram user ID
-            jobs: List of job listings to send
-        """
+        try:
+            await self.application.updater.stop()
+            await self.application.stop()
+            await self.application.shutdown()
+            logger.info("Telegram bot stopped")
+        except Exception as e:
+            logger.error(f"Failed to stop Telegram bot: {e}")
+            raise
+
+    async def send_job_listings(self, user_id: int, jobs: List[JobListing]) -> None:
+        """Send job listings to a user."""
         if not jobs:
             return
         
@@ -338,22 +432,81 @@ class TelegramBot:
                     chat_id=user_id,
                     text=message
                 )
-        except TelegramError as e:
-            logger.error(f"Failed to send job listings to user {user_id}: {e}")
+        except Exception as e:
+            logger.error(f"Error sending job listings to user {user_id}: {e}")
     
     def _format_job_listing(self, job: JobListing) -> str:
-        """Format a job listing for display.
-        
-        Args:
-            job: Job listing to format
-            
-        Returns:
-            Formatted job listing string
-        """
+        """Format a job listing for display."""
         return (
             f"🏢 {job.company}\n"
             f"💼 {job.title}\n"
             f"📍 {job.location}\n"
             f"💼 {job.job_type}\n"
             f"🔗 {job.link}"
-        ) 
+        )
+
+    async def _handle_send_message(self, event: StreamEvent):
+        """Handle message sending requests from other components"""
+        try:
+            await self.application.bot.send_message(
+                chat_id=event.data["user_id"],
+                text=event.data["message"]
+            )
+        except Exception as e:
+            logger.error(f"Error sending message: {e}")
+
+    async def new_raw_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle raw job search creation with format: /newRaw title;location;job_type;remote_types;time_period"""
+        try:
+            # Get the full message text and remove the command
+            message_text = update.message.text
+            if not message_text.startswith('/newRaw '):
+                await update.message.reply_text(
+                    "Please provide job search details in format:\n"
+                    "/newRaw title;location;job_type;remote_types;time_period\n\n"
+                    "Example:\n"
+                    "/newRaw Solution Architect;Germany;FULL_TIME;REMOTE,HYBRID;MINUTES_5"
+                )
+                return
+
+            # Extract the data part after the command
+            raw_data = message_text[len('/newRaw '):].split(';')
+            if len(raw_data) != 5:
+                await update.message.reply_text(
+                    "Invalid format. Please use:\n"
+                    "/newRaw title;location;job_type;remote_types;time_period"
+                )
+                return
+
+            title, location, job_type, remote_types, time_period = raw_data
+
+            # Parse enums
+            try:
+                job_types = [JobType.parse(job_type.strip())]
+                remote_types_list = [RemoteType.parse(rt.strip()) for rt in remote_types.split(',')]
+                time_period_enum = TimePeriod.parse(time_period.strip())
+            except ValueError as e:
+                await update.message.reply_text(f"Error parsing input: {str(e)}")
+                return
+
+            # Publish job search add event
+            self.stream_manager.publish(StreamEvent(
+                type=StreamType.JOB_SEARCH_ADD,
+                data=JobSearchIn(
+                    job_title=title,
+                    location=location,
+                    job_types=job_types,
+                    remote_types=remote_types_list,
+                    time_period=time_period_enum,
+                    user_id=update.effective_user.id
+                ).model_dump(mode='json'),
+                source="telegram_bot"
+            ))
+
+            await update.message.reply_text("Your job search has been created and will be processed shortly.")
+
+        except Exception as e:
+            logger.error(f"Error creating raw job search: {e}")
+            await update.message.reply_text(
+                "Sorry, there was an error creating your job search. Please check the format and try again."
+            ) 

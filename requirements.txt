@@ -6,8 +6,11 @@ beautifulsoup4>=4.12.0
 pandas>=2.2.0
 apscheduler==3.10.4
 python-telegram-bot==20.8
-httpx>=0.27.2
+httpx~=0.26.0
 pyperclip==1.8.2
+motor==3.3.2
+pymongo==4.6.1
+rx>=3.2.0
 
 # Development dependencies
 pytest>=7.4.0

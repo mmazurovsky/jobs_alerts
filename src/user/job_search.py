@@ -1,113 +1,202 @@
 """
-Job search management for users.
+Job search manager for handling user job searches.
 """
+import logging
 from typing import Dict, List, Optional
-from datetime import datetime
 import uuid
-from src.data.data import JobSearchOut, JobSearchIn, JobType, RemoteType, TimePeriod
+from src.data.data import JobSearchOut, JobSearchIn, JobType, RemoteType, StreamManager, TimePeriod, StreamType, StreamEvent
+from src.data.mongo_manager import MongoManager
+import asyncio
 
-# Global scheduler instance
-_scheduler = None
+logger = logging.getLogger(__name__)
 
 class JobSearchManager:
-    """Manages job searches for users."""
+    """Manager for job searches."""
     
-    def __init__(self):
-        """Initialize the job search manager."""
-        # Map of user_id to list of JobSearchData
-        self._job_searches: Dict[int, List[JobSearchOut]] = {}
-    
-    def add_job_search(self, new_search: JobSearchIn) -> JobSearchOut:
-        """Add a new job search for a user."""
-        if new_search.user_id not in self._job_searches:
-            self._job_searches[new_search.user_id] = []
+    def __init__(self, mongo_manager: MongoManager, stream_manager: StreamManager):
+        """Initialize job search manager."""
+        self.job_searches: Dict[int, List[JobSearchOut]] = {}
+        self._mongo_manager = mongo_manager
+        self._scheduler = None
+        self.stream_manager = stream_manager
         
-        job_search = JobSearchOut(
-            id=str(uuid.uuid4()),
-            job_title=new_search.job_title,
-            location=new_search.location,
-            job_types=new_search.job_types,
-            remote_types=new_search.remote_types,
-            time_period=new_search.time_period,
-            user_id=new_search.user_id,
-            created_at=datetime.now()
+        # Subscribe to job search events
+        self.stream_manager.get_stream(StreamType.JOB_SEARCH_ADD).subscribe(
+            lambda event: asyncio.create_task(self._handle_job_search_add(event))
         )
-        self._job_searches[new_search.user_id].append(job_search)
-        
-        # Notify the scheduler about the new job search
-        self._notify_scheduler()
-        return job_search
+        self.stream_manager.get_stream(StreamType.JOB_SEARCH_REMOVE).subscribe(
+            lambda event: asyncio.create_task(self._handle_job_search_remove(event))
+        )
     
-    def remove_job_search(self, user_id: int, search_id: str) -> bool:
-        """Remove a job search for a user by search ID."""
-        if user_id not in self._job_searches:
-            return False
-        
-        # Find and remove the job search with matching ID
-        for i, search in enumerate(self._job_searches[user_id]):
-            if search.id == search_id:
-                self._job_searches[user_id].pop(i)
-                # Notify the scheduler about the removed job search
-                self._notify_scheduler()
-                return True
-        return False
+    async def initialize(self) -> None:
+        """Initialize job searches from MongoDB."""
+        try:
+            searches = await self._mongo_manager.get_all_searches()
+            for search in searches:
+                if search.user_id not in self.job_searches:
+                    self.job_searches[search.user_id] = []
+                self.job_searches[search.user_id].append(search)
+            
+            # Send initial job searches to scheduler
+            self.stream_manager.publish(StreamEvent(
+                type=StreamType.INITIAL_JOB_SEARCHES,
+                data={
+                    "job_searches": [search.model_dump() for search in searches]
+                },
+                source="job_search_manager"
+            ))
+            
+            logger.info(f"Loaded {len(searches)} job searches from MongoDB")
+        except Exception as e:
+            logger.error(f"Error loading job searches from MongoDB: {e}")
     
-    def get_user_job_searches(self, user_id: int) -> List[JobSearchOut]:
-        """Get all job searches for a user."""
-        return self._job_searches.get(user_id, [])
-    
-    def get_active_job_searches(self) -> List[JobSearchOut]:
-        """Get all active job searches across all users."""
-        all_searches = []
-        for searches in self._job_searches.values():
-            all_searches.extend(searches)
-        return all_searches
-    
-    def clear_user_job_searches(self, user_id: int) -> None:
-        """Remove all job searches for a user."""
-        if user_id in self._job_searches:
-            del self._job_searches[user_id]
-            # Notify the scheduler about the cleared job searches
-            self._notify_scheduler()
+    def set_scheduler(self, scheduler) -> None:
+        """Set the scheduler for notifications."""
+        self._scheduler = scheduler
     
     def _notify_scheduler(self) -> None:
-        """Notify the scheduler about changes to job searches."""
-        global _scheduler
-        if _scheduler:
-            # Update the scheduler with the latest job searches
-            # We need to run this in an event loop since it's an async method
-            import asyncio
-            try:
-                # Get the current event loop
-                loop = asyncio.get_event_loop()
-                # Run the update_job_searches method
-                loop.create_task(_scheduler.update_job_searches())
-            except Exception as e:
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.error(f"Error updating job searches: {e}")
+        """Notify scheduler of job search changes."""
+        if self._scheduler:
+            self._scheduler.notify_job_search_changes()
+    
+    async def add_search(self, search: JobSearchOut) -> bool:
+        """Add a new job search."""
+        try:
+            # Save to MongoDB first
+            if not await self._mongo_manager.save_search(search):
+                return False
+            
+            # Update in-memory cache
+            if search.user_id not in self.job_searches:
+                self.job_searches[search.user_id] = []
+            self.job_searches[search.user_id].append(search)
+            
+            # Notify scheduler
+            self._notify_scheduler()
+            return True
+        except Exception as e:
+            logger.error(f"Error adding job search: {e}")
+            return False
+    
+    async def delete_search(self, search_id: str, user_id: int) -> bool:
+        """Delete a job search."""
+        try:
+            # Delete from MongoDB first
+            if not await self._mongo_manager.delete_search(search_id):
+                return False
+            
+            # Delete from in-memory cache
+            if user_id in self.job_searches:
+                self.job_searches[user_id] = [
+                    s for s in self.job_searches[user_id] if s.id != search_id
+                ]
+            
+            # Notify scheduler
+            self._notify_scheduler()
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting job search: {e}")
+            return False
+    
+    async def get_user_searches(self, user_id: int) -> List[JobSearchOut]:
+        """Get all job searches for a user."""
+        return self.job_searches.get(user_id, [])
+    
+    async def get_active_job_searches(self) -> List[JobSearchOut]:
+        """Get all active job searches."""
+        active_searches = []
+        for searches in self.job_searches.values():
+            active_searches.extend([s for s in searches if s.is_active])
+        return active_searches
+    
+    async def clear_user_job_searches(self, user_id: int) -> None:
+        """Clear all job searches for a user."""
+        if user_id in self.job_searches:
+            # Delete each search from MongoDB
+            for search in self.job_searches[user_id]:
+                await self._mongo_manager.delete_search(search.id)
+            
+            # Clear from in-memory cache
+            del self.job_searches[user_id]
+            
+            # Notify scheduler
+            self._notify_scheduler()
+            
+    async def _handle_job_search_add(self, event: StreamEvent):
+        """Handle job search addition from Telegram Bot"""
+        try:
+            # Create JobSearchOut from JobSearchIn
+            job_search_in = JobSearchIn(**event.data)
+            job_search_out = JobSearchOut(
+                id=str(uuid.uuid4()),
+                job_title=job_search_in.job_title,
+                location=job_search_in.location,
+                job_types=job_search_in.job_types,
+                remote_types=job_search_in.remote_types,
+                time_period=job_search_in.time_period,
+                user_id=job_search_in.user_id
+            )
+            
+            # Add job search to MongoDB
+            await self.add_search(job_search_out)
+            
+            # Publish processed event
+            self.stream_manager.publish(StreamEvent(
+                type=StreamType.JOB_SEARCH_PROCESSED,
+                data={
+                    "job_search": job_search_out.model_dump(mode='json'),
+                    "status": "processed"
+                },
+                source="job_search_manager"
+            ))
+            
+        except Exception as e:
+            logger.error(f"Error handling job search addition: {e}")
+            self.stream_manager.publish(StreamEvent(
+                type=StreamType.SEND_MESSAGE,
+                data={
+                    "user_id": event.data["user_id"],
+                    "message": "Sorry, there was an error creating your job search. Please try again."
+                },
+                source="job_search_manager"
+            ))
 
-def set_scheduler(scheduler) -> None:
-    """Set the global scheduler instance."""
-    global _scheduler
-    _scheduler = scheduler
-
-# Create a singleton instance
-job_search_manager = JobSearchManager()
-
-# Helper functions for backward compatibility
-def add_job_search(new_search: JobSearchIn) -> JobSearchOut:
-    """Add a new job search for a user."""
-    return job_search_manager.add_job_search(new_search)
-
-def remove_job_search(user_id: int, search_id: str) -> bool:
-    """Remove a job search for a user by search ID."""
-    return job_search_manager.remove_job_search(user_id, search_id)
-
-def get_user_job_searches(user_id: int) -> List[JobSearchOut]:
-    """Get all job searches for a user."""
-    return job_search_manager.get_user_job_searches(user_id)
-
-def get_active_job_searches() -> List[JobSearchOut]:
-    """Get all active job searches across all users."""
-    return job_search_manager.get_active_job_searches() 
+    async def _handle_job_search_remove(self, event: StreamEvent):
+        """Handle job search removal from Telegram Bot"""
+        try:
+            # Delete the job search
+            success = await self.delete_search(
+                search_id=event.data["search_id"],
+                user_id=event.data["user_id"]
+            )
+            
+            if success:
+                self.stream_manager.publish(StreamEvent(
+                    type=StreamType.SEND_MESSAGE,
+                    data={
+                        "user_id": event.data["user_id"],
+                        "message": "Your job search has been removed successfully."
+                    },
+                    source="job_search_manager"
+                ))
+            else:
+                self.stream_manager.publish(StreamEvent(
+                    type=StreamType.SEND_MESSAGE,
+                    data={
+                        "user_id": event.data["user_id"],
+                        "message": "Sorry, we couldn't find the job search to remove."
+                    },
+                    source="job_search_manager"
+                ))
+                
+        except Exception as e:
+            logger.error(f"Error handling job search removal: {e}")
+            self.stream_manager.publish(StreamEvent(
+                type=StreamType.SEND_MESSAGE,
+                data={
+                    "user_id": event.data["user_id"],
+                    "message": "Sorry, there was an error removing your job search. Please try again."
+                },
+                source="job_search_manager"
+            ))
+            
