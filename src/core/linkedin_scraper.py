@@ -603,7 +603,6 @@ class LinkedInScraper:
         except Exception as e:
             logger.error(f"Error applying filters: {str(e)}")
             return False
-
     async def search_jobs(self, keywords: str, location: Optional[str] = None, max_pages: int = 10, 
                          job_types: Optional[List[str]] = None, remote_types: Optional[List[str]] = None,
                          time_period: Optional[TimePeriod] = None, max_jobs: Optional[int] = None) -> List[JobListing]:
@@ -690,3 +689,4 @@ class LinkedInScraper:
         self.context = None
         self.page = None
         self.playwright = None
+

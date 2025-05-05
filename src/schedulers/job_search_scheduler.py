@@ -23,17 +23,9 @@ class JobSearchScheduler:
         self._stream_manager = stream_manager
         self._scheduler = AsyncIOScheduler()
         self._active_searches: Dict[str, JobSearchOut] = {}  # search_id -> JobSearch
-        self._sent_jobs: Dict[str, Set[str]] = {}  # search_id -> set of job_ids
+        self._already_sent_jobs: Dict[str, Set[str]] = {}  # search_id -> set of job_ids
         self._running = True
         self._background_task = asyncio.create_task(self._run())
-        
-        # Subscribe to job search events
-        self._stream_manager.get_stream(StreamType.JOB_SEARCH_PROCESSED).subscribe(
-            lambda event: asyncio.create_task(self._handle_job_search_processed(event))
-        )
-        self._stream_manager.get_stream(StreamType.INITIAL_JOB_SEARCHES).subscribe(
-            lambda event: asyncio.create_task(self._handle_initial_job_searches(event))
-        )
     
     async def initialize(self) -> None:
         """Initialize the scheduler."""
@@ -61,7 +53,7 @@ class JobSearchScheduler:
         self._scheduler.shutdown()
         self._running = False
         self._active_searches.clear()
-        self._sent_jobs.clear()
+        self._already_sent_jobs.clear()
         
         if self._background_task:
             self._background_task.cancel()
@@ -85,57 +77,84 @@ class JobSearchScheduler:
                 logger.error(f"Error in scheduler loop: {e}")
                 await asyncio.sleep(60)  # Wait a bit before retrying
     
-    async def _handle_initial_job_searches(self, event: StreamEvent) -> None:
-        """Handle initial job searches from manager."""
+    async def add_initial_job_searches(self, job_searches: List[JobSearchOut]) -> None:
+        """Add initial job searches from manager."""
         try:
-            job_searches = event.data["job_searches"]
-            for search_data in job_searches:
-                search = JobSearchOut(**search_data)
-                if search.search_id not in self._active_searches:
-                    self._active_searches[search.search_id] = search
-                    self._sent_jobs[search.search_id] = set()
-                    self._schedule_job_search(search)
-                    logger.info(f"Added initial job search: {search.search_id}")
+            for search in job_searches:
+                await self.add_job_search(search)
         except Exception as e:
-            logger.error(f"Error handling initial job searches: {e}")
-    
-    async def _handle_job_search_processed(self, event: StreamEvent) -> None:
-        """Handle processed job search from manager."""
+            logger.error(f"Error adding initial job searches: {e}")
+
+    async def add_job_search(self, search: JobSearchOut) -> None:
+        """Add a new job search from manager."""
         try:
-            search_data = event.data["job_search"]
-            search = JobSearchOut(**search_data)
-            
             # Only add if not already present
-            if search.search_id not in self._active_searches:
-                self._active_searches[search.search_id] = search
-                self._sent_jobs[search.search_id] = set()
+            if search.id not in self._active_searches:
+                self._active_searches[search.id] = search
+                self._already_sent_jobs[search.id] = set()
                 self._schedule_job_search(search)
-                logger.info(f"Added new job search: {search.search_id}")
+                logger.info(f"Added new job search: {search.id}")
             else:
-                logger.info(f"Job search already exists: {search.search_id}")
+                logger.info(f"Job search already exists: {search.id}")
         except Exception as e:
-            logger.error(f"Error handling job search: {e}")
+            logger.error(f"Error adding job search: {e}")
+
+    async def remove_job_search(self, search_id: str) -> None:
+        """Remove a job search from the scheduler."""
+        try:
+            if search_id in self._active_searches:
+                # Remove from scheduler
+                job_id = f"job_search_{search_id}"
+                if self._scheduler.get_job(job_id):
+                    self._scheduler.remove_job(job_id)
+                
+                # Remove from active searches and sent jobs
+                del self._active_searches[search_id]
+                if search_id in self._already_sent_jobs:
+                    del self._already_sent_jobs[search_id]
+                
+                logger.info(f"Removed job search: {search_id}")
+            else:
+                logger.warning(f"Job search not found: {search_id}")
+        except Exception as e:
+            logger.error(f"Error removing job search: {e}")
+
+    def _schedule_job_search(self, search: JobSearchOut) -> None:
+        """Schedule a job search to run periodically."""
+        job_id = f"job_search_{search.id}"
+        trigger = search.time_period.get_cron_trigger()
+        
+        self._scheduler.add_job(
+            self._search_jobs_and_send_write_message_event,
+            trigger=trigger,
+            args=[search],
+            id=job_id,
+            replace_existing=True
+        )
+        logger.info(f"Scheduled job search {search.id} with trigger {trigger}")
     
-    async def _check_job_search(self, job_search: JobSearchOut):
+    async def _search_jobs_and_send_write_message_event(self, job_search: JobSearchOut):
         """Check a single job search for new listings."""
         try:
-            # Check if we need to search for this job yet
-            last_check = self._last_check.get(job_search.id)
-            if last_check and datetime.now() - last_check < timedelta(minutes=30):
-                return
+            
+            # Initialize sent_jobs set if it doesn't exist
+            if job_search.id not in self._already_sent_jobs:
+                self._already_sent_jobs[job_search.id] = set()
             
             # Search for jobs
             jobs = await self._scraper.search_jobs(
-                title=job_search.title,
+                keywords=job_search.job_title,
                 location=job_search.location,
-                experience=job_search.experience
+                job_types=job_search.job_types,
+                remote_types=job_search.remote_types,
+                time_period=job_search.time_period
             )
             
             if jobs:
                 # Filter out jobs that have already been sent
                 new_jobs = [
                     job for job in jobs 
-                    if not self._sent_jobs_tracker.is_job_sent(job_search.user_id, job.link)
+                    if job.link not in self._already_sent_jobs[job_search.id]
                 ]
                 
                 if new_jobs:
@@ -152,37 +171,46 @@ class JobSearchScheduler:
                     
                     # Mark jobs as sent
                     for job in new_jobs:
-                        self._sent_jobs_tracker.mark_job_sent(job_search.user_id, job.link)
+                        self._already_sent_jobs[job_search.id].add(job.link)
                     
-                    self.stream_manager.publish(StreamEvent(
+                    # Create message data instance
+                    message_data = {
+                        "user_id": job_search.user_id,
+                        "message": message
+                    }
+                    
+                    # Send message through stream manager
+                    self._stream_manager.publish(StreamEvent(
                         type=StreamType.SEND_MESSAGE,
-                        data={
-                            "user_id": job_search.user_id,
-                            "message": message
-                        },
+                        data=message_data,
                         source="job_search_scheduler"
                     ))
                 else:
-                    self.stream_manager.publish(StreamEvent(
+                    # Create message data instance
+                    message_data = {
+                        "user_id": job_search.user_id,
+                        "message": "No new jobs found matching your criteria."
+                    }
+                    
+                    # Send message through stream manager
+                    self._stream_manager.publish(StreamEvent(
                         type=StreamType.SEND_MESSAGE,
-                        data={
-                            "user_id": job_search.user_id,
-                            "message": "No new jobs found matching your criteria."
-                        },
+                        data=message_data,
                         source="job_search_scheduler"
                     ))
             
-            # Update last check time
-            self._last_check[job_search.id] = datetime.now()
-            
         except Exception as e:
             logger.error(f"Error checking job search: {e}")
-            self.stream_manager.publish(StreamEvent(
+            # Create error message data instance
+            message_data = {
+                "user_id": job_search.user_id,
+                "message": "Sorry, there was an error checking for new jobs. Please try again later."
+            }
+            
+            # Send error message through stream manager
+            self._stream_manager.publish(StreamEvent(
                 type=StreamType.SEND_MESSAGE,
-                data={
-                    "user_id": job_search.user_id,
-                    "message": "Sorry, there was an error checking for new jobs. Please try again later."
-                },
+                data=message_data,
                 source="job_search_scheduler"
             ))
     
@@ -190,6 +218,6 @@ class JobSearchScheduler:
         """Check all active job searches for new listings."""
         for job_search in self._active_searches.values():
             try:
-                await self._check_job_search(job_search)
+                await self._search_jobs_and_send_write_message_event(job_search)
             except Exception as e:
                 logger.error(f"Error checking job search {job_search.id}: {e}") 

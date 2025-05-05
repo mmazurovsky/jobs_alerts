@@ -36,6 +36,7 @@ async def handle_shutdown(signum: int, frame: Optional[object]) -> None:
 
 async def main() -> None:
     """Main application entry point."""
+    container = None
     try:
         # Get container and initialize services
         container = get_container()
@@ -51,7 +52,9 @@ async def main() -> None:
             
     except Exception as e:
         logger.error(f"Application error: {e}")
-        await handle_shutdown(0, None)
+        if container:
+            await container.shutdown()
+        sys.exit(1)
 
 if __name__ == "__main__":
     asyncio.run(main()) 

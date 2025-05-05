@@ -24,6 +24,7 @@ from src.data.data import (
     StreamType, StreamEvent, StreamManager, JobSearchRemove
 )
 from src.data.mongo_manager import MongoManager
+from src.user.job_search_manager import JobSearchManager
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +34,12 @@ TITLE, LOCATION, JOB_TYPES, REMOTE_TYPES, TIME_PERIOD, CONFIRM = range(6)
 class TelegramBot:
     """Telegram bot for managing job searches."""
     
-    def __init__(self, token: str, mongo_manager: MongoManager, stream_manager: StreamManager):
+    def __init__(self, token: str, mongo_manager: MongoManager, stream_manager: StreamManager, job_search_manager: JobSearchManager):
         """Initialize the bot with token and MongoDB manager."""
         self.token = token
         self.mongo_manager = mongo_manager
         self.stream_manager = stream_manager
+        self.job_search_manager = job_search_manager
         self.application = Application.builder().token(token).build()
         self._setup_handlers()
 
@@ -106,7 +108,7 @@ class TelegramBot:
         try:
             from src.core.container import get_container
             container = get_container()
-            searches = await container.job_search_manager.get_user_searches(update.effective_user.id)
+            searches: List[JobSearchOut] = await container.job_search_manager.get_user_searches(update.effective_user.id)
             
             if not searches:
                 await update.message.reply_text("You don't have any job searches yet.")
@@ -117,13 +119,12 @@ class TelegramBot:
                 job_types = ", ".join(t.value for t in search.job_types)
                 remote_types = ", ".join(t.value for t in search.remote_types)
                 message += (
-                    f"ID: {search.id}\n"
-                    f"Title: {search.title}\n"
+                    f"Title: {search.job_title}\n"
                     f"Location: {search.location}\n"
                     f"Job Types: {job_types}\n"
                     f"Remote Types: {remote_types}\n"
-                    f"Check Frequency: {search.time_period.value}\n"
-                    f"Last Check: {search.last_check}\n\n"
+                    f"Check Frequency: {search.time_period.display_name}\n"
+                    f"Created At: {search.created_at}\n\n"
                 )
                 
             await update.message.reply_text(message)
@@ -147,16 +148,13 @@ class TelegramBot:
                 
             search_id = args[0]
             
-            # Publish job search removal event
-            self.stream_manager.publish(StreamEvent(
-                type=StreamType.JOB_SEARCH_REMOVE,
-                data=JobSearchRemove(
-                    user_id=update.effective_user.id,
-                    search_id=search_id
-                ).model_dump(mode='json'),
-                source="telegram_bot"
-            ))
-            
+            # Create JobSearchRemove instance and pass it directly
+            job_search_remove = JobSearchRemove(
+                user_id=update.effective_user.id,
+                search_id=search_id
+            )
+
+            await self.job_search_manager.delete_search(job_search_remove)
             await update.message.reply_text("Your job search will be removed shortly.")
             
         except Exception as e:
@@ -328,19 +326,17 @@ class TelegramBot:
             return CONFIRM
             
         try:
-            # Publish job search add event
-            self.stream_manager.publish(StreamEvent(
-                type=StreamType.JOB_SEARCH_ADD,
-                data=JobSearchIn(
-                    job_title=context.user_data['title'],
-                    location=context.user_data['location'],
-                    job_types=[t for t in context.user_data['job_types']],
-                    remote_types=[t for t in context.user_data['remote_types']],
-                    time_period=context.user_data['time_period'],
-                    user_id=update.effective_user.id
-                ).model_dump(mode='json'),
-                source="telegram_bot"
-            ))
+            # Create JobSearchIn instance and pass it directly
+            job_search_in = JobSearchIn(
+                job_title=context.user_data['title'],
+                location=context.user_data['location'],
+                job_types=context.user_data['job_types'],
+                remote_types=context.user_data['remote_types'],
+                time_period=context.user_data['time_period'],
+                user_id=update.effective_user.id
+            )
+
+            await self.job_search_manager.add_search(job_search_in)
             
             await update.message.reply_text("Your job search has been created and will be processed shortly.")
             
@@ -448,9 +444,10 @@ class TelegramBot:
     async def _handle_send_message(self, event: StreamEvent):
         """Handle message sending requests from other components"""
         try:
+            message_data = event.data
             await self.application.bot.send_message(
-                chat_id=event.data["user_id"],
-                text=event.data["message"]
+                chat_id=message_data["user_id"],
+                text=message_data["message"]
             )
         except Exception as e:
             logger.error(f"Error sending message: {e}")
@@ -489,19 +486,17 @@ class TelegramBot:
                 await update.message.reply_text(f"Error parsing input: {str(e)}")
                 return
 
-            # Publish job search add event
-            self.stream_manager.publish(StreamEvent(
-                type=StreamType.JOB_SEARCH_ADD,
-                data=JobSearchIn(
-                    job_title=title,
-                    location=location,
-                    job_types=job_types,
-                    remote_types=remote_types_list,
-                    time_period=time_period_enum,
-                    user_id=update.effective_user.id
-                ).model_dump(mode='json'),
-                source="telegram_bot"
-            ))
+            # Create JobSearchIn instance and pass it directly
+            job_search_in = JobSearchIn(
+                job_title=title,
+                location=location,
+                job_types=job_types,
+                remote_types=remote_types_list,
+                time_period=time_period_enum,
+                user_id=update.effective_user.id
+            )
+
+            await self.job_search_manager.add_search(job_search_in)
 
             await update.message.reply_text("Your job search has been created and will be processed shortly.")
 

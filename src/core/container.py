@@ -9,7 +9,7 @@ from src.core.config import Config
 from src.core.linkedin_scraper import LinkedInScraper
 from src.data.mongo_manager import MongoManager
 from src.schedulers.job_search_scheduler import JobSearchScheduler
-from src.user.job_search import JobSearchManager
+from src.user.job_search_manager import JobSearchManager
 from src.data.data import StreamManager
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ class Container:
     def job_search_manager(self) -> JobSearchManager:
         """Get the job search manager instance."""
         if not self._job_search_manager:
-            self._job_search_manager = JobSearchManager(self.mongo_manager, self.stream_manager)
+            self._job_search_manager = JobSearchManager(mongo_manager=self.mongo_manager, job_search_scheduler=self.scheduler)
         return self._job_search_manager
     
     @property
@@ -65,7 +65,8 @@ class Container:
             self._telegram_bot = TelegramBot(
                 token=token,
                 mongo_manager=self.mongo_manager,
-                stream_manager=self.stream_manager
+                stream_manager=self.stream_manager,
+                job_search_manager=self.job_search_manager
             )
         return self._telegram_bot
     
@@ -107,26 +108,26 @@ class Container:
             
         except Exception as e:
             logger.error(f"Error initializing services: {e}")
-            await self.shutdown()
+            # Don't call shutdown here as it might cause issues with uninitialized services
             raise
     
     async def shutdown(self) -> None:
         """Shutdown all services."""
         try:
-            # Shutdown scheduler first
-            if self._scheduler:
+            # Shutdown scheduler first if it was initialized
+            if self._scheduler and hasattr(self._scheduler, '_running'):
                 await self._scheduler.stop()
             
-            # Shutdown Telegram bot
-            if self._telegram_bot:
+            # Shutdown Telegram bot if it was initialized
+            if self._telegram_bot and hasattr(self._telegram_bot, 'application'):
                 await self._telegram_bot.stop()
             
-            # Shutdown LinkedIn scraper
-            if self._scraper:
+            # Shutdown LinkedIn scraper if it was initialized
+            if self._scraper and hasattr(self._scraper, 'browser'):
                 await self._scraper.close()
             
-            # Close MongoDB connection last
-            if self._mongo_manager:
+            # Close MongoDB connection last if it was initialized
+            if self._mongo_manager and hasattr(self._mongo_manager, 'client'):
                 await self._mongo_manager.close()
             
             logger.info("All services shut down successfully")

@@ -2,14 +2,28 @@
 Data models and enums for the application.
 """
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
-from typing import Dict, List, Optional, Set
-from pydantic import BaseModel, Field
+from typing import Any, Dict, List, Optional, Set
+from pydantic import BaseModel, Field, field_validator
 from rx.subject import Subject
 
 from apscheduler.triggers.cron import CronTrigger
 
+from src.utils.other_util import enable_enum_name_deserialization
+
+class CustomBaseModel(BaseModel):
+    """Base model with custom JSON encoders and decoders."""
+    model_config = {
+        "use_enum_values": False,  # Use enum names instead of values
+        "populate_by_name": True,  # Allow population by field names
+        "json_encoders": {
+            Enum: lambda v: v.name,  # Serialize enums as their names
+            datetime: lambda v: v.isoformat()  # Serialize datetime as ISO format
+        }
+    }
+
+@enable_enum_name_deserialization
 class TimePeriod(Enum):
     """Time periods for job search."""
     MINUTES_5 = (300, "5 minutes")    # 5 minutes
@@ -59,11 +73,11 @@ class TimePeriod(Enum):
             return CronTrigger(minute='0,15,30,45')
 
     @classmethod
-    def parse(cls, value: str) -> 'TimePeriod':
-        """Parse a string value to TimePeriod enum.
+    def from_human_readable(cls, value: str) -> 'TimePeriod':
+        """Parse a human-readable string value to TimePeriod enum.
         
         Args:
-            value: String value to parse (e.g., "5 minutes", "MINUTES_5")
+            value: Human-readable string value (e.g., "5 minutes", "1 hour")
             
         Returns:
             TimePeriod enum value
@@ -71,14 +85,21 @@ class TimePeriod(Enum):
         Raises:
             ValueError: If the value cannot be parsed
         """
-            
-        # Try matching against display names
         for time_period in cls:
             if value.lower() == time_period.display_name.lower():
                 return time_period
                 
         raise ValueError(f"Invalid time period: {value}")
 
+    def to_human_readable(self) -> str:
+        """Get the human-readable representation of the time period."""
+        return self.display_name
+
+    def to_seconds(self) -> int:
+        """Get the time period in seconds."""
+        return self.seconds
+
+@enable_enum_name_deserialization
 class JobType(Enum):
     """Types of jobs."""
     FULL_TIME = "Full-time"
@@ -87,53 +108,13 @@ class JobType(Enum):
     TEMPORARY = "Temporary"
     INTERNSHIP = "Internship"
 
-    @classmethod
-    def parse(cls, value: str) -> 'JobType':
-        """Parse a string value to JobType enum.
-        
-        Args:
-            value: String value to parse (e.g., "Full-time", "FULL_TIME")
-            
-        Returns:
-            JobType enum value
-            
-        Raises:
-            ValueError: If the value cannot be parsed
-        """
-            
-        # Try matching against display values
-        for job_type in cls:
-            if value.lower() == job_type.value.lower():
-                return job_type
-                
-        raise ValueError(f"Invalid job type: {value}")
-
+@enable_enum_name_deserialization
 class RemoteType(Enum):
     """Types of remote work."""
     ON_SITE = "On-site"
     REMOTE = "Remote"
     HYBRID = "Hybrid"
 
-    @classmethod
-    def parse(cls, value: str) -> 'RemoteType':
-        """Parse a string value to RemoteType enum.
-        
-        Args:
-            value: String value to parse (e.g., "Remote", "REMOTE")
-            
-        Returns:
-            RemoteType enum value
-            
-        Raises:
-            ValueError: If the value cannot be parsed
-        """
-            
-        # Try matching against display values
-        for remote_type in cls:
-            if value.lower() == remote_type.value.lower():
-                return remote_type
-                
-        raise ValueError(f"Invalid remote type: {value}")
 
 @dataclass
 class JobListing:
@@ -146,12 +127,12 @@ class JobListing:
     job_type: str
     timestamp: str
 
-class JobSearchRemove(BaseModel):
+class JobSearchRemove(CustomBaseModel):
     """Data for removing a job search from Telegram bot."""
     user_id: int
     search_id: str
 
-class JobSearchIn(BaseModel):
+class JobSearchIn(CustomBaseModel):
     """Data for creating a new job search."""
     job_title: str
     location: str
@@ -160,7 +141,7 @@ class JobSearchIn(BaseModel):
     time_period: TimePeriod
     user_id: int  # Telegram user ID
 
-class JobSearchOut(BaseModel):
+class JobSearchOut(CustomBaseModel):
     """Configuration for a job search."""
     id: str = Field(..., description="Required unique identifier for the job search")
     job_title: str
@@ -169,7 +150,7 @@ class JobSearchOut(BaseModel):
     remote_types: List[RemoteType]
     time_period: TimePeriod
     user_id: int  # Telegram user ID
-    created_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=datetime.now(timezone.utc))
 
 class SentJobsTracker:
     """Tracks which jobs have been sent to users to prevent duplicates."""
@@ -197,26 +178,18 @@ class SentJobsTracker:
 
 class StreamType(Enum):
     """Types of events in the stream."""
-    JOB_SEARCH_ADD = "job_search_add"
-    JOB_SEARCH_REMOVE = "job_search_remove"
-    JOB_SEARCH_PROCESSED = "job_search_processed"
     SEND_MESSAGE = "send_message"
-    INITIAL_JOB_SEARCHES = "initial_job_searches"
 
 @dataclass
 class StreamEvent:
     type: StreamType
-    data: dict
+    data: Any
     source: str
 
 class StreamManager:
     def __init__(self):
         self.streams: Dict[StreamType, Subject] = {
-            StreamType.JOB_SEARCH_ADD: Subject(),
-            StreamType.JOB_SEARCH_REMOVE: Subject(),
-            StreamType.JOB_SEARCH_PROCESSED: Subject(),
             StreamType.SEND_MESSAGE: Subject(),
-            StreamType.INITIAL_JOB_SEARCHES: Subject()
         }
     
     def get_stream(self, stream_type: StreamType) -> Subject:
