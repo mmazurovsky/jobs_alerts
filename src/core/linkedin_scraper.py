@@ -282,7 +282,7 @@ class LinkedInScraper:
             return []
 
         # Wait for initial job cards to load
-        await asyncio.sleep(2)
+        await asyncio.sleep(1)
         
         job_cards = []
         seen_job_ids = set()  # Track seen job IDs
@@ -343,34 +343,32 @@ class LinkedInScraper:
                 await job_cards_container.focus()
                 await asyncio.sleep(0.5)
                 
-                # Single efficient scroll method
+                # Proactive scrolling with smaller increments
                 await self.page.evaluate('''
                     () => {
                         const container = document.querySelector('#main > div > div.scaffold-layout__list-detail-inner.scaffold-layout__list-detail-inner--grow > div.scaffold-layout__list > div');
                         if (container) {
-                            const lastCard = container.querySelector('.job-card-container:last-child');
-                            if (lastCard) {
-                                // Scroll the last card into view with a slight offset
-                                const cardRect = lastCard.getBoundingClientRect();
-                                const containerRect = container.getBoundingClientRect();
-                                const scrollAmount = cardRect.bottom - containerRect.top + 100;
-                                container.scrollBy({
-                                    top: scrollAmount,
-                                    behavior: 'auto'
-                                });
-                            } else {
-                                // Fallback if no cards found
-                                container.scrollBy({
-                                    top: 1000,
-                                    behavior: 'auto'
-                                });
-                            }
+                            // Get the current scroll position and container height
+                            const currentScroll = container.scrollTop;
+                            const containerHeight = container.clientHeight;
+                            
+                            // Calculate a smaller scroll increment (about 2-3 cards worth)
+                            const scrollIncrement = Math.min(containerHeight, 800);
+                            
+                            // Scroll by the increment
+                            container.scrollBy({
+                                top: scrollIncrement,
+                                behavior: 'auto'
+                            });
+                            
+                            // Log scroll position for debugging
+                            console.log('Scrolled from', currentScroll, 'to', container.scrollTop);
                         }
                     }
                 ''')
                 
                 # Wait for potential new content to load
-                await asyncio.sleep(2)
+                await asyncio.sleep(1.5)
                 
             except Exception as e:
                 logger.warning(f"Error during scrolling: {e}")
@@ -686,7 +684,7 @@ class LinkedInScraper:
                 
                 # Verify login was successful
                 await self.page.goto("https://www.linkedin.com/feed/", timeout=30000)
-                await asyncio.sleep(2)
+                await asyncio.sleep(1)
                 feed_content = await self.page.query_selector('.feed-shared-update-v2')
                 if not feed_content:
                     raise Exception("Login verification failed - could not find feed content")
@@ -705,7 +703,7 @@ class LinkedInScraper:
                     logger.warning("Failed to apply filters, continuing with unfiltered results")
                 
             # Check for no results banner after applying filters
-            await asyncio.sleep(2)  # Wait for results to update
+            await asyncio.sleep(1)  # Wait for results to update
             no_results_banner = await self.page.query_selector('.jobs-search-no-results-banner__image')
             if no_results_banner:
                 logger.info("No jobs found matching the search criteria")
