@@ -73,11 +73,11 @@ class TimePeriod(Enum):
             return CronTrigger(minute='0,15,30,45')
 
     @classmethod
-    def from_human_readable(cls, value: str) -> 'TimePeriod':
-        """Parse a human-readable string value to TimePeriod enum.
+    def parse(cls, value: str) -> 'TimePeriod':
+        """Parse a string value to TimePeriod enum.
         
         Args:
-            value: Human-readable string value (e.g., "5 minutes", "1 hour")
+            value: String value (e.g., "MINUTES_5", "5 minutes")
             
         Returns:
             TimePeriod enum value
@@ -85,11 +85,15 @@ class TimePeriod(Enum):
         Raises:
             ValueError: If the value cannot be parsed
         """
-        for time_period in cls:
-            if value.lower() == time_period.display_name.lower():
-                return time_period
-                
-        raise ValueError(f"Invalid time period: {value}")
+        # First try to match by name
+        try:
+            return cls[value.strip()]
+        except KeyError:
+            # Then try to match by display name
+            for time_period in cls:
+                if value.strip().lower() == time_period.display_name.lower():
+                    return time_period
+            raise ValueError(f"Invalid time period: {value}")
 
     def to_human_readable(self) -> str:
         """Get the human-readable representation of the time period."""
@@ -108,6 +112,29 @@ class JobType(Enum):
     TEMPORARY = "Temporary"
     INTERNSHIP = "Internship"
 
+    @classmethod
+    def parse(cls, value: str) -> 'JobType':
+        """Parse a string value to JobType enum.
+        
+        Args:
+            value: String value (e.g., "FULL_TIME", "Full-time")
+            
+        Returns:
+            JobType enum value
+            
+        Raises:
+            ValueError: If the value cannot be parsed
+        """
+        # First try to match by name
+        try:
+            return cls[value.strip()]
+        except KeyError:
+            # Then try to match by value
+            for job_type in cls:
+                if value.strip().lower() == job_type.value.lower():
+                    return job_type
+            raise ValueError(f"Invalid job type: {value}")
+
 @enable_enum_name_deserialization
 class RemoteType(Enum):
     """Types of remote work."""
@@ -115,6 +142,28 @@ class RemoteType(Enum):
     REMOTE = "Remote"
     HYBRID = "Hybrid"
 
+    @classmethod
+    def parse(cls, value: str) -> 'RemoteType':
+        """Parse a string value to RemoteType enum.
+        
+        Args:
+            value: String value (e.g., "REMOTE", "Remote")
+            
+        Returns:
+            RemoteType enum value
+            
+        Raises:
+            ValueError: If the value cannot be parsed
+        """
+        # First try to match by name
+        try:
+            return cls[value.strip()]
+        except KeyError:
+            # Then try to match by value
+            for remote_type in cls:
+                if value.strip().lower() == remote_type.value.lower():
+                    return remote_type
+            raise ValueError(f"Invalid remote type: {value}")
 
 @dataclass
 class JobListing:
@@ -141,6 +190,23 @@ class JobSearchIn(CustomBaseModel):
     time_period: TimePeriod
     user_id: int  # Telegram user ID
 
+    @field_validator('job_types', 'remote_types', 'time_period')
+    @classmethod
+    def validate_enums(cls, v):
+        """Validate that enum values are properly handled."""
+        if isinstance(v, list):
+            return [item.name if isinstance(item, Enum) else item for item in v]
+        return v.name if isinstance(v, Enum) else v
+
+    model_config = {
+        "use_enum_values": True,  # Use enum values instead of names
+        "populate_by_name": True,  # Allow population by field names
+        "json_encoders": {
+            Enum: lambda v: v.name,  # Serialize enums as their names
+            datetime: lambda v: v.isoformat()  # Serialize datetime as ISO format
+        }
+    }
+
 class JobSearchOut(CustomBaseModel):
     """Configuration for a job search."""
     id: str = Field(..., description="Required unique identifier for the job search")
@@ -150,7 +216,7 @@ class JobSearchOut(CustomBaseModel):
     remote_types: List[RemoteType]
     time_period: TimePeriod
     user_id: int  # Telegram user ID
-    created_at: datetime = Field(default_factory=datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class SentJobsTracker:
     """Tracks which jobs have been sent to users to prevent duplicates."""

@@ -38,8 +38,12 @@ class JobSearchManager:
         except Exception as e:
             logger.error(f"Error loading job searches from MongoDB: {e}")
     
-    async def add_search(self, search_in: JobSearchIn) -> bool:
-        """Add a new job search."""
+    async def add_search(self, search_in: JobSearchIn) -> str:
+        """Add a new job search.
+        
+        Returns:
+            str: The ID of the created job search
+        """
         try:
             search = JobSearchOut(
                 id=str(uuid.uuid4()),
@@ -51,8 +55,7 @@ class JobSearchManager:
                 user_id=search_in.user_id
             )
             # Save to MongoDB first
-            if not await self._mongo_manager.save_job_search(search):
-                return False
+            await self._mongo_manager.save_job_search(search)
             
             # Update in-memory cache
             if search.user_id not in self.job_searches:
@@ -62,10 +65,10 @@ class JobSearchManager:
             # Add to scheduler directly
             await self._job_search_scheduler.add_job_search(search)
             
-            return True
+            return search.id
         except Exception as e:
             logger.error(f"Error adding job search: {e}")
-            return False
+            raise
     
     async def delete_search(self, job_search_remove: JobSearchRemove) -> bool:
         """Delete a job search."""

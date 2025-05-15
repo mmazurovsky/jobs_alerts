@@ -4,7 +4,7 @@ Telegram bot module.
 import logging
 import os
 from typing import Dict, List, Optional
-from telegram import Update
+from telegram import Update, Message
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -453,55 +453,97 @@ class TelegramBot:
             logger.error(f"Error sending message: {e}")
 
     async def new_raw_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle raw job search creation with format: /newRaw title;location;job_type;remote_types;time_period"""
+        """Handle /newRaw command with raw input format.
+        
+        Format: /newRaw <job_title>;<location>;<job_type>;<remote_type>;<time_period>
+        Example: /newRaw Software Engineer;Germany;FULL_TIME;REMOTE;MINUTES_5
+        
+        Available values:
+        - Job types: FULL_TIME, PART_TIME, CONTRACT, TEMPORARY, INTERNSHIP
+        - Remote types: ON_SITE, REMOTE, HYBRID
+        - Time periods: MINUTES_5, MINUTES_15, MINUTES_30, MINUTES_60, HOURS_4
+        """
         try:
-            # Get the full message text and remove the command
-            message_text = update.message.text
-            if not message_text.startswith('/newRaw '):
-                await update.message.reply_text(
-                    "Please provide job search details in format:\n"
-                    "/newRaw title;location;job_type;remote_types;time_period\n\n"
-                    "Example:\n"
-                    "/newRaw Solution Architect;Germany;FULL_TIME;REMOTE,HYBRID;MINUTES_5"
-                )
-                return
-
-            # Extract the data part after the command
-            raw_data = message_text[len('/newRaw '):].split(';')
-            if len(raw_data) != 5:
+            # Get the raw input after the command
+            raw_input = update.message.text.split('/newRaw ')[1].strip()
+            logger.info(f"Received newRaw command: {update.message.text}")
+            
+            # Split the input by semicolon
+            parts = raw_input.split(';')
+            logger.info(f"Split raw data: {parts}")
+            
+            if len(parts) != 5:
                 await update.message.reply_text(
                     "Invalid format. Please use:\n"
-                    "/newRaw title;location;job_type;remote_types;time_period"
+                    "/newRaw <job_title>;<location>;<job_type>;<remote_type>;<time_period>\n\n"
+                    "Example: /newRaw Software Engineer;Germany;FULL_TIME;REMOTE;MINUTES_5\n\n"
+                    "Available values:\n"
+                    "- Job types: FULL_TIME, PART_TIME, CONTRACT, TEMPORARY, INTERNSHIP\n"
+                    "- Remote types: ON_SITE, REMOTE, HYBRID\n"
+                    "- Time periods: MINUTES_5, MINUTES_15, MINUTES_30, MINUTES_60, HOURS_4"
                 )
                 return
-
-            title, location, job_type, remote_types, time_period = raw_data
-
-            # Parse enums
-            try:
-                job_types = [JobType.parse(job_type.strip())]
-                remote_types_list = [RemoteType.parse(rt.strip()) for rt in remote_types.split(',')]
-                time_period_enum = TimePeriod.parse(time_period.strip())
-            except ValueError as e:
-                await update.message.reply_text(f"Error parsing input: {str(e)}")
-                return
-
-            # Create JobSearchIn instance and pass it directly
+            
+            # Parse the parts
+            title, location, job_type, remote_types, time_period = parts
+            logger.info(f"Parsed fields: title='{title}', location='{location}', job_type='{job_type}', remote_types='{remote_types}', time_period='{time_period}'")
+            
+            # Parse job type
+            logger.info("Attempting to parse job type...")
+            job_type_enum = JobType.parse(job_type.strip())
+            logger.info(f"Successfully parsed job type: {[job_type_enum]}")
+            
+            # Parse remote types
+            logger.info("Attempting to parse remote types...")
+            remote_type_enum = RemoteType.parse(remote_types.strip())
+            logger.info(f"Successfully parsed remote types: {[remote_type_enum]}")
+            
+            # Parse time period
+            logger.info("Attempting to parse time period...")
+            time_period_enum = TimePeriod.parse(time_period.strip())
+            logger.info(f"Successfully parsed time period: {time_period_enum}")
+            
+            # Create job search
+            logger.info("Creating JobSearchIn instance...")
             job_search_in = JobSearchIn(
-                job_title=title,
-                location=location,
-                job_types=job_types,
-                remote_types=remote_types_list,
-                time_period=time_period_enum,
+                job_title=title.strip(),
+                location=location.strip(),
+                job_types=[job_type_enum.name],  # Use enum name
+                remote_types=[remote_type_enum.name],  # Use enum name
+                time_period=time_period_enum.name,  # Use enum name
                 user_id=update.effective_user.id
             )
-
-            await self.job_search_manager.add_search(job_search_in)
-
-            await update.message.reply_text("Your job search has been created and will be processed shortly.")
-
-        except Exception as e:
-            logger.error(f"Error creating raw job search: {e}")
+            
+            # Add the search
+            logger.info("Adding job search to manager...")
+            search_id = await self.job_search_manager.add_search(job_search_in)
+            
+            # Send confirmation
             await update.message.reply_text(
-                "Sorry, there was an error creating your job search. Please check the format and try again."
+                f"✅ New job search created!\n\n"
+                f"Job: {title}\n"
+                f"Location: {location}\n"
+                f"Type: {job_type_enum.value}\n"
+                f"Remote: {remote_type_enum.value}\n"
+                f"Check every: {time_period_enum.display_name}\n\n"
+                f"Search ID: {search_id}"
+            )
+            
+        except ValueError as e:
+            logger.error(f"Error parsing input: {str(e)}")
+            await update.message.reply_text(
+                f"❌ Error: {str(e)}\n\n"
+                "Please use the correct format:\n"
+                "/newRaw <job_title>;<location>;<job_type>;<remote_type>;<time_period>\n\n"
+                "Example: /newRaw Software Engineer;Germany;FULL_TIME;REMOTE;MINUTES_5\n\n"
+                "Available values:\n"
+                "- Job types: FULL_TIME, PART_TIME, CONTRACT, TEMPORARY, INTERNSHIP\n"
+                "- Remote types: ON_SITE, REMOTE, HYBRID\n"
+                "- Time periods: MINUTES_5, MINUTES_15, MINUTES_30, MINUTES_60, HOURS_4"
+            )
+        except Exception as e:
+            logger.error(f"Error creating raw job search: {str(e)}", exc_info=True)
+            await update.message.reply_text(
+                f"❌ Error creating job search: {str(e)}\n\n"
+                "Please try again or contact support if the issue persists."
             ) 
