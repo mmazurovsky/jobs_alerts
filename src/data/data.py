@@ -7,10 +7,13 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Set
 from pydantic import BaseModel, Field, field_validator
 from rx.subject import Subject
+import logging
 
 from apscheduler.triggers.cron import CronTrigger
 
 from src.utils.other_util import enable_enum_name_deserialization
+
+logger = logging.getLogger(__name__)
 
 class CustomBaseModel(BaseModel):
     """Base model with custom JSON encoders and decoders."""
@@ -228,19 +231,25 @@ class SentJobsTracker:
         if user_id not in self._sent_jobs:
             self._sent_jobs[user_id] = set()
         self._sent_jobs[user_id].add(job_link)
+        logger.debug(f"Marked job as sent: user_id={user_id}, job_link={job_link}")
+        logger.debug(f"Current sent jobs for user {user_id}: {self._sent_jobs[user_id]}")
 
     def is_job_sent(self, user_id: int, job_link: str) -> bool:
         """Check if a job has already been sent to a user."""
-        return user_id in self._sent_jobs and job_link in self._sent_jobs[user_id]
+        sent = user_id in self._sent_jobs and job_link in self._sent_jobs[user_id]
+        logger.debug(f"Check is_job_sent: user_id={user_id}, job_link={job_link}, result={sent}")
+        return sent
 
     def clear_user_jobs(self, user_id: int) -> None:
         """Clear the sent jobs history for a user."""
         if user_id in self._sent_jobs:
             del self._sent_jobs[user_id]
+            logger.debug(f"Cleared sent jobs for user {user_id}")
 
     def clear_all(self) -> None:
         """Clear all sent jobs history."""
         self._sent_jobs.clear()
+        logger.debug("Cleared all sent jobs history")
 
 class StreamType(Enum):
     """Types of events in the stream."""

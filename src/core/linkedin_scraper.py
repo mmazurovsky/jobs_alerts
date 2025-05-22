@@ -41,7 +41,7 @@ class LinkedInScraper:
             
             # Launch Chromium with specific settings
             self.browser = await self.playwright.chromium.launch(
-                headless=False,  # Make browser visible
+                headless=True,  # Run browser in headless mode
                 args=[
                     "--no-sandbox",
                     "--disable-setuid-sandbox",
@@ -51,7 +51,12 @@ class LinkedInScraper:
                     "--window-size=1920,1080",
                     "--disable-web-security",
                     "--disable-features=IsolateOrigins,site-per-process",
-                    "--disable-site-isolation-trials"
+                    "--disable-site-isolation-trials",
+                    "--disable-font-subpixel-positioning",
+                    "--disable-remote-fonts",
+                    "--disable-google-fonts",
+                    "--disable-font-antialiasing",
+                    "--font-render-hinting=none"
                 ],
                 chromium_sandbox=False
             )
@@ -66,7 +71,8 @@ class LinkedInScraper:
                 "is_mobile": False,
                 "locale": "en-US",
                 "timezone_id": "America/New_York",
-                "permissions": ["geolocation"]
+                "permissions": ["geolocation"],
+                "bypass_csp": True
             }
             
             # Try to load existing state if available
@@ -534,7 +540,7 @@ class LinkedInScraper:
             # Click the "All filters" button to open the filter panel
             all_filters_button = await self.page.wait_for_selector(
                 'button[aria-label="Show all filters. Clicking this button displays all available filter options."]',
-                timeout=5000,
+                timeout=10000,
                 state="visible"
             )
             
@@ -545,97 +551,78 @@ class LinkedInScraper:
             await all_filters_button.click()
             await asyncio.sleep(1.5)  # Wait for filter panel to open
             
-            # Find the modal content container
-            modal_content = await self.page.wait_for_selector(
-                '.artdeco-modal__content',
-                timeout=5000,
-                state="visible"
-            )
-            
-            if not modal_content:
-                logger.error("Could not find modal content")
-                return False
-            
-            # Scroll the modal content to make all filters visible
-            await modal_content.evaluate('''
-                element => {
-                    element.scrollTop = element.scrollHeight;
-                    // Additional scroll to ensure we reach the bottom
-                    setTimeout(() => {
-                        element.scrollTop = element.scrollHeight;
-                    }, 100);
-                }
-            ''')
-            await asyncio.sleep(1)  # Wait for scroll to complete
-            
-            # Apply job type filters if provided
+            # Find the modal content first
+            modal_content = await self.page.wait_for_selector('.artdeco-modal__content', timeout=10000, state="visible")
+
+            # Scroll the modal content to the bottom to ensure all filters are loaded
+            await modal_content.evaluate('el => { el.scrollTop = el.scrollHeight; }')
+            await asyncio.sleep(0.5)
+
+            # Mapping for job type and remote type codes
+            job_type_map = {
+                "Full-time": "F",
+                "Part-time": "P",
+                "Contract": "C",
+                "Temporary": "T",
+            }
+            remote_type_map = {
+                "On-site": "1",
+                "Remote": "2",
+                "Hybrid": "3",
+            }
+
+            # For job types
             if job_types:
                 for job_type in job_types:
-                    # Map job type to the corresponding value
-                    job_type_map = {
-                        "Full-time": "F",
-                        "Part-time": "P",
-                        "Contract": "C",
-                        "Temporary": "T",
-                        "Internship": "I"
-                    }
-                    
-                    job_type_value = job_type.value if hasattr(job_type, 'value') else job_type
-                    if job_type_value in job_type_map:
-                        value = job_type_map[job_type_value]
-                        label_selector = f'label[for="advanced-filter-jobType-{value}"]'
-                        
-                        # Find and click the label
-                        label = await self.page.wait_for_selector(label_selector, timeout=2000)
-                        if label:
-                            # Scroll the label into view within the modal
-                            await label.scroll_into_view_if_needed()
-                            await asyncio.sleep(0.5)
-                            
-                            # Check if the associated checkbox is already checked
-                            checkbox = await self.page.query_selector(f'#advanced-filter-jobType-{value}')
-                            if checkbox:
-                                is_checked = await checkbox.is_checked()
-                                if not is_checked:
-                                    await label.click()
-                                    await asyncio.sleep(0.5)
-                                    logger.info(f"Applied job type filter: {job_type_value}")
-            
-            # Apply remote type filters if provided
+                    jt = job_type.value if hasattr(job_type, 'value') else job_type
+                    code = job_type_map.get(jt)
+                    if not code:
+                        logger.warning(f"No code mapping for job type: {jt}")
+                        continue
+                    label_selector = f'label[for="advanced-filter-jobType-{code}"]'
+                    label = await modal_content.wait_for_selector(label_selector, timeout=10000)
+                    if label:
+                        await label.scroll_into_view_if_needed()
+                        await asyncio.sleep(0.5)
+                        checkbox = await modal_content.query_selector(f'input#advanced-filter-jobType-{code}')
+                        if checkbox:
+                            is_checked = await checkbox.is_checked()
+                            if not is_checked:
+                                await label.click()
+                                await asyncio.sleep(0.5)
+                                logger.info(f"Clicked label for job type filter: {jt}")
+                    else:
+                        logger.error(f"Could not find label for job type: {jt}")
+                    await asyncio.sleep(0.5)
+
+            # For remote types
             if remote_types:
                 for remote_type in remote_types:
-                    # Map remote type to the corresponding value
-                    remote_type_map = {
-                        "Hybrid": "3",
-                        "On-site": "1",
-                        "Remote": "2"
-                    }
-                    
-                    remote_type_value = remote_type.value if hasattr(remote_type, 'value') else remote_type
-                    if remote_type_value in remote_type_map:
-                        value = remote_type_map[remote_type_value]
-                        label_selector = f'label[for="advanced-filter-workplaceType-{value}"]'
-                        
-                        # Find and click the label
-                        label = await self.page.wait_for_selector(label_selector, timeout=2000)
-                        if label:
-                            # Scroll the label into view within the modal
-                            await label.scroll_into_view_if_needed()
-                            await asyncio.sleep(0.5)
-                            
-                            # Check if the associated checkbox is already checked
-                            checkbox = await self.page.query_selector(f'#advanced-filter-workplaceType-{value}')
-                            if checkbox:
-                                is_checked = await checkbox.is_checked()
-                                if not is_checked:
-                                    await label.click()
-                                    await asyncio.sleep(0.5)
-                                    logger.info(f"Applied remote type filter: {remote_type_value}")
-            
+                    rt = remote_type.value if hasattr(remote_type, 'value') else remote_type
+                    code = remote_type_map.get(rt)
+                    if not code:
+                        logger.warning(f"No code mapping for remote type: {rt}")
+                        continue
+                    label_selector = f'label[for="advanced-filter-workplaceType-{code}"]'
+                    label = await modal_content.wait_for_selector(label_selector, timeout=10000)
+                    if label:
+                        await label.scroll_into_view_if_needed()
+                        await asyncio.sleep(0.5)
+                        checkbox = await modal_content.query_selector(f'input#advanced-filter-workplaceType-{code}')
+                        if checkbox:
+                            is_checked = await checkbox.is_checked()
+                            if not is_checked:
+                                await label.click()
+                                await asyncio.sleep(0.5)
+                                logger.info(f"Clicked label for remote type filter: {rt}")
+                    else:
+                        logger.error(f"Could not find label for remote type: {rt}")
+                    await asyncio.sleep(0.5)
+
             # Click the "Show results" button
             show_results_button = await self.page.wait_for_selector(
                 'button[data-test-reusables-filters-modal-show-results-button="true"]',
-                timeout=2000,
+                timeout=10000,
                 state="visible"
             )
             
@@ -676,7 +663,7 @@ class LinkedInScraper:
             # First ensure we're logged in
             logger.info("Verifying LinkedIn login status...")
             await self.page.goto("https://www.linkedin.com/feed/", timeout=30000)
-            await asyncio.sleep(2)
+            await asyncio.sleep(1)
             
             # Check if we're on the login page or if feed content is missing
             login_form = await self.page.query_selector('#username')
@@ -687,7 +674,7 @@ class LinkedInScraper:
                 login_success = await self.login()
                 if not login_success:
                     raise Exception("Failed to login to LinkedIn")
-                await asyncio.sleep(2)
+                await asyncio.sleep(1)
                 
                 # Verify login was successful
                 await self.page.goto("https://www.linkedin.com/feed/", timeout=30000)
