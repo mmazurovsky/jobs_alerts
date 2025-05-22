@@ -2,24 +2,49 @@
 Data models and enums for the application.
 """
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
+from pydantic import BaseModel, Field, field_validator
+from rx.subject import Subject
 
 from apscheduler.triggers.cron import CronTrigger
 
+from src.utils.other_util import enable_enum_name_deserialization
+
+class CustomBaseModel(BaseModel):
+    """Base model with custom JSON encoders and decoders."""
+    model_config = {
+        "use_enum_values": False,  # Use enum names instead of values
+        "populate_by_name": True,  # Allow population by field names
+        "json_encoders": {
+            Enum: lambda v: v.name,  # Serialize enums as their names
+            datetime: lambda v: v.isoformat()  # Serialize datetime as ISO format
+        }
+    }
+
+@enable_enum_name_deserialization
 class TimePeriod(Enum):
     """Time periods for job search."""
-    MINUTES_5 = 300    # 5 minutes
-    MINUTES_15 = 900   # 15 minutes
-    MINUTES_30 = 1800  # 30 minutes
-    MINUTES_60 = 3600  # 1 hour
-    HOURS_4 = 14400    # 4 hours
+    MINUTES_5 = (300, "5 minutes")    # 5 minutes
+    MINUTES_15 = (900, "15 minutes")   # 15 minutes
+    MINUTES_30 = (1800, "30 minutes")  # 30 minutes
+    MINUTES_60 = (3600, "1 hour")      # 1 hour
+    HOURS_4 = (14400, "4 hours")       # 4 hours
+
+    def __init__(self, seconds: int, display_name: str):
+        self._seconds = seconds
+        self._display_name = display_name
 
     @property
     def seconds(self) -> int:
         """Get the time period in seconds."""
-        return self.value
+        return self._seconds
+
+    @property
+    def display_name(self) -> str:
+        """Get the human-readable display name."""
+        return self._display_name
 
     @property
     def f_tpr_param(self) -> str:
@@ -47,6 +72,38 @@ class TimePeriod(Enum):
             # Default to running every 15 minutes
             return CronTrigger(minute='0,15,30,45')
 
+    @classmethod
+    def parse(cls, value: str) -> 'TimePeriod':
+        """Parse a string value to TimePeriod enum.
+        
+        Args:
+            value: String value (e.g., "MINUTES_5", "5 minutes")
+            
+        Returns:
+            TimePeriod enum value
+            
+        Raises:
+            ValueError: If the value cannot be parsed
+        """
+        # First try to match by name
+        try:
+            return cls[value.strip()]
+        except KeyError:
+            # Then try to match by display name
+            for time_period in cls:
+                if value.strip().lower() == time_period.display_name.lower():
+                    return time_period
+            raise ValueError(f"Invalid time period: {value}")
+
+    def to_human_readable(self) -> str:
+        """Get the human-readable representation of the time period."""
+        return self.display_name
+
+    def to_seconds(self) -> int:
+        """Get the time period in seconds."""
+        return self.seconds
+
+@enable_enum_name_deserialization
 class JobType(Enum):
     """Types of jobs."""
     FULL_TIME = "Full-time"
@@ -55,11 +112,58 @@ class JobType(Enum):
     TEMPORARY = "Temporary"
     INTERNSHIP = "Internship"
 
+    @classmethod
+    def parse(cls, value: str) -> 'JobType':
+        """Parse a string value to JobType enum.
+        
+        Args:
+            value: String value (e.g., "FULL_TIME", "Full-time")
+            
+        Returns:
+            JobType enum value
+            
+        Raises:
+            ValueError: If the value cannot be parsed
+        """
+        # First try to match by name
+        try:
+            return cls[value.strip()]
+        except KeyError:
+            # Then try to match by value
+            for job_type in cls:
+                if value.strip().lower() == job_type.value.lower():
+                    return job_type
+            raise ValueError(f"Invalid job type: {value}")
+
+@enable_enum_name_deserialization
 class RemoteType(Enum):
     """Types of remote work."""
     ON_SITE = "On-site"
     REMOTE = "Remote"
     HYBRID = "Hybrid"
+
+    @classmethod
+    def parse(cls, value: str) -> 'RemoteType':
+        """Parse a string value to RemoteType enum.
+        
+        Args:
+            value: String value (e.g., "REMOTE", "Remote")
+            
+        Returns:
+            RemoteType enum value
+            
+        Raises:
+            ValueError: If the value cannot be parsed
+        """
+        # First try to match by name
+        try:
+            return cls[value.strip()]
+        except KeyError:
+            # Then try to match by value
+            for remote_type in cls:
+                if value.strip().lower() == remote_type.value.lower():
+                    return remote_type
+            raise ValueError(f"Invalid remote type: {value}")
 
 @dataclass
 class JobListing:
@@ -72,8 +176,12 @@ class JobListing:
     job_type: str
     timestamp: str
 
-@dataclass
-class JobSearchIn:
+class JobSearchRemove(CustomBaseModel):
+    """Data for removing a job search from Telegram bot."""
+    user_id: int
+    search_id: str
+
+class JobSearchIn(CustomBaseModel):
     """Data for creating a new job search."""
     job_title: str
     location: str
@@ -82,17 +190,33 @@ class JobSearchIn:
     time_period: TimePeriod
     user_id: int  # Telegram user ID
 
-@dataclass
-class JobSearchOut:
+    @field_validator('job_types', 'remote_types', 'time_period')
+    @classmethod
+    def validate_enums(cls, v):
+        """Validate that enum values are properly handled."""
+        if isinstance(v, list):
+            return [item.name if isinstance(item, Enum) else item for item in v]
+        return v.name if isinstance(v, Enum) else v
+
+    model_config = {
+        "use_enum_values": True,  # Use enum values instead of names
+        "populate_by_name": True,  # Allow population by field names
+        "json_encoders": {
+            Enum: lambda v: v.name,  # Serialize enums as their names
+            datetime: lambda v: v.isoformat()  # Serialize datetime as ISO format
+        }
+    }
+
+class JobSearchOut(CustomBaseModel):
     """Configuration for a job search."""
-    id: str  # Required unique identifier for the job search
+    id: str = Field(..., description="Required unique identifier for the job search")
     job_title: str
     location: str
     job_types: List[JobType]
     remote_types: List[RemoteType]
     time_period: TimePeriod
     user_id: int  # Telegram user ID
-    created_at: datetime
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class SentJobsTracker:
     """Tracks which jobs have been sent to users to prevent duplicates."""
@@ -117,3 +241,25 @@ class SentJobsTracker:
     def clear_all(self) -> None:
         """Clear all sent jobs history."""
         self._sent_jobs.clear()
+
+class StreamType(Enum):
+    """Types of events in the stream."""
+    SEND_MESSAGE = "send_message"
+
+@dataclass
+class StreamEvent:
+    type: StreamType
+    data: Any
+    source: str
+
+class StreamManager:
+    def __init__(self):
+        self.streams: Dict[StreamType, Subject] = {
+            StreamType.SEND_MESSAGE: Subject(),
+        }
+    
+    def get_stream(self, stream_type: StreamType) -> Subject:
+        return self.streams[stream_type]
+    
+    def publish(self, event: StreamEvent):
+        self.streams[event.type].on_next(event)
