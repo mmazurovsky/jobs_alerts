@@ -24,8 +24,6 @@ class JobSearchScheduler:
         self._scheduler = AsyncIOScheduler()
         self._active_searches: Dict[str, JobSearchOut] = {}  # search_id -> JobSearch
         self._sent_jobs_tracker = SentJobsTracker()  # Use SentJobsTracker for all users
-        self._running = False
-        self._background_task = None
     
     async def initialize(self) -> None:
         """Initialize the scheduler."""
@@ -33,54 +31,16 @@ class JobSearchScheduler:
     
     async def start(self) -> None:
         """Start the scheduler."""
-        if self._running:
-            logger.warning("Scheduler is already running")
-            return
-        
         # Start the APScheduler
         self._scheduler.start()
-        self._running = True
-        
-        # Start the background task
-        self._background_task = asyncio.create_task(self._run())
-        
         logger.info("Job search scheduler started")
     
     async def stop(self) -> None:
         """Stop the scheduler."""
-        if not self._running:
-            logger.warning("Scheduler is not running")
-            return
-        
         # Shutdown the APScheduler
         self._scheduler.shutdown()
-        self._running = False
         self._active_searches.clear()
-        
-        if self._background_task:
-            self._background_task.cancel()
-            try:
-                await self._background_task
-            except asyncio.CancelledError:
-                pass
-            self._background_task = None
-        
         logger.info("Job search scheduler stopped")
-    
-    async def _run(self) -> None:
-        """Run the scheduler loop."""
-        logger.info("Starting scheduler background task")
-        while self._running:
-            try:
-                logger.info(f"Checking {len(self._active_searches)} job searches")
-                await self._check_job_searches()
-                await asyncio.sleep(300)  # Check every 5 minutes
-            except asyncio.CancelledError:
-                logger.info("Scheduler background task cancelled")
-                break
-            except Exception as e:
-                logger.error(f"Error in scheduler loop: {e}")
-                await asyncio.sleep(60)  # Wait a bit before retrying
     
     async def add_initial_job_searches(self, job_searches: List[JobSearchOut]) -> None:
         """Add initial job searches from manager."""
@@ -151,7 +111,8 @@ class JobSearchScheduler:
                 job_types=job_search.job_types,
                 remote_types=job_search.remote_types,
                 time_period=job_search.time_period,
-                max_pages=max_pages
+                max_pages=max_pages,
+                blacklist=job_search.blacklist,
             )
             
             if jobs:
@@ -192,18 +153,7 @@ class JobSearchScheduler:
                         source="job_search_scheduler"
                     ))
                 else:
-                    # Create message data instance
-                    message_data = {
-                        "user_id": user_id,
-                        "message": "No new jobs found matching your criteria."
-                    }
-                    
-                    # Send message through stream manager
-                    self._stream_manager.publish(StreamEvent(
-                        type=StreamType.SEND_MESSAGE,
-                        data=message_data,
-                        source="job_search_scheduler"
-                    ))
+                    logger.info(f"No new jobs found for {job_search.job_title} in {job_search.location}")
             
             # Close the browser session
             await scraper.close()

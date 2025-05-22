@@ -192,6 +192,7 @@ class JobSearchIn(CustomBaseModel):
     remote_types: List[RemoteType]
     time_period: TimePeriod
     user_id: int  # Telegram user ID
+    blacklist: List[str] = []  # List of strings to blacklist from job titles
 
     @field_validator('job_types', 'remote_types', 'time_period')
     @classmethod
@@ -219,6 +220,7 @@ class JobSearchOut(CustomBaseModel):
     remote_types: List[RemoteType]
     time_period: TimePeriod
     user_id: int  # Telegram user ID
+    blacklist: List[str] = []  # List of strings to blacklist from job titles
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class SentJobsTracker:

@@ -29,7 +29,7 @@ from src.user.job_search_manager import JobSearchManager
 logger = logging.getLogger(__name__)
 
 # Conversation states
-TITLE, LOCATION, JOB_TYPES, REMOTE_TYPES, TIME_PERIOD, CONFIRM = range(6)
+TITLE, LOCATION, JOB_TYPES, REMOTE_TYPES, TIME_PERIOD, BLACKLIST, CONFIRM = range(7)
 
 class TelegramBot:
     """Telegram bot for managing job searches."""
@@ -66,6 +66,7 @@ class TelegramBot:
                 JOB_TYPES: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.job_types)],
                 REMOTE_TYPES: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.remote_types)],
                 TIME_PERIOD: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.time_period)],
+                BLACKLIST: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.blacklist)],
                 CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.confirm)],
             },
             fallbacks=[
@@ -306,11 +307,26 @@ class TelegramBot:
             
         context.user_data['time_period'] = selected_period
         
+        # Prompt for blacklist
+        await update.message.reply_text(
+            "Optional: Enter a comma-separated list of words or phrases to blacklist from job titles.\n"
+            "Any job whose title contains one of these (case-insensitive) will be excluded.\n"
+            "For example: intern,senior,lead\n\n"
+            "Or just type '-' to skip."
+        )
+        return BLACKLIST
+    
+    async def blacklist(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Handle blacklist input."""
+        input_text = update.message.text.strip()
+        if input_text == '-' or not input_text:
+            context.user_data['blacklist'] = []
+        else:
+            context.user_data['blacklist'] = [s.strip() for s in input_text.split(',') if s.strip()]
         # Show confirmation message
         await update.message.reply_text(
             "Please confirm your job search by typing 'yes' or cancel by typing 'no'."
         )
-        
         return CONFIRM
     
     async def confirm(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -333,7 +349,8 @@ class TelegramBot:
                 job_types=context.user_data['job_types'],
                 remote_types=context.user_data['remote_types'],
                 time_period=context.user_data['time_period'],
-                user_id=update.effective_user.id
+                user_id=update.effective_user.id,
+                blacklist=context.user_data.get('blacklist', [])
             )
 
             await self.job_search_manager.add_search(job_search_in)
@@ -455,13 +472,14 @@ class TelegramBot:
     async def new_raw_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /newRaw command with raw input format.
         
-        Format: /newRaw <job_title>;<location>;<job_type>;<remote_type>;<time_period>
-        Example: /newRaw Software Engineer;Germany;FULL_TIME;REMOTE;MINUTES_5
+        Format: /newRaw <job_title>;<location>;<job_type>;<remote_type>;<time_period>[;<blacklist>]
+        Example: /newRaw Software Engineer;Germany;FULL_TIME;REMOTE;MINUTES_5;intern,senior,lead
         
         Available values:
         - Job types: FULL_TIME, PART_TIME, CONTRACT, TEMPORARY, INTERNSHIP
         - Remote types: ON_SITE, REMOTE, HYBRID
         - Time periods: MINUTES_5, MINUTES_15, MINUTES_30, MINUTES_60, HOURS_4
+        - Blacklist: Optional, comma-separated words/phrases to exclude from job titles
         """
         try:
             # Get the raw input after the command
@@ -471,22 +489,23 @@ class TelegramBot:
             # Split the input by semicolon
             parts = raw_input.split(';')
             logger.info(f"Split raw data: {parts}")
-            
-            if len(parts) != 5:
+            if len(parts) < 5 or len(parts) > 6:
                 await update.message.reply_text(
                     "Invalid format. Please use:\n"
-                    "/newRaw <job_title>;<location>;<job_type>;<remote_type>;<time_period>\n\n"
-                    "Example: /newRaw Software Engineer;Germany;FULL_TIME;REMOTE;MINUTES_5\n\n"
+                    "/newRaw <job_title>;<location>;<job_type>;<remote_type>;<time_period>[;<blacklist>]\n\n"
+                    "Example: /newRaw Software Engineer;Germany;FULL_TIME;REMOTE;MINUTES_5;intern,junior\n\n"
                     "Available values:\n"
                     "- Job types: FULL_TIME, PART_TIME, CONTRACT, TEMPORARY, INTERNSHIP\n"
                     "- Remote types: ON_SITE, REMOTE, HYBRID\n"
-                    "- Time periods: MINUTES_5, MINUTES_15, MINUTES_30, MINUTES_60, HOURS_4"
+                    "- Time periods: MINUTES_5, MINUTES_15, MINUTES_30, MINUTES_60, HOURS_4\n"
+                    "- Blacklist: Optional, comma-separated words/phrases to exclude from job titles"
                 )
                 return
-            
-            # Parse the parts
-            title, location, job_type, remote_types, time_period = parts
-            logger.info(f"Parsed fields: title='{title}', location='{location}', job_type='{job_type}', remote_types='{remote_types}', time_period='{time_period}'")
+            title, location, job_type, remote_types, time_period = parts[:5]
+            blacklist = []
+            if len(parts) == 6:
+                blacklist = [s.strip() for s in parts[5].split(',') if s.strip()]
+            logger.info(f"Parsed fields: title='{title}', location='{location}', job_type='{job_type}', remote_types='{remote_types}', time_period='{time_period}', blacklist={blacklist}")
             
             # Parse job type
             logger.info("Attempting to parse job type...")
@@ -511,7 +530,8 @@ class TelegramBot:
                 job_types=[job_type_enum.name],  # Use enum name
                 remote_types=[remote_type_enum.name],  # Use enum name
                 time_period=time_period_enum.name,  # Use enum name
-                user_id=update.effective_user.id
+                user_id=update.effective_user.id,
+                blacklist=blacklist
             )
             
             # Add the search
@@ -519,27 +539,31 @@ class TelegramBot:
             search_id = await self.job_search_manager.add_search(job_search_in)
             
             # Send confirmation
-            await update.message.reply_text(
+            msg = (
                 f"✅ New job search created!\n\n"
                 f"Job: {title}\n"
                 f"Location: {location}\n"
                 f"Type: {job_type_enum.value}\n"
                 f"Remote: {remote_type_enum.value}\n"
-                f"Check every: {time_period_enum.display_name}\n\n"
-                f"Search ID: {search_id}"
+                f"Check every: {time_period_enum.display_name}\n"
             )
+            if blacklist:
+                msg += f"Blacklist: {', '.join(blacklist)}\n"
+            msg += f"\nSearch ID: {search_id}"
+            await update.message.reply_text(msg)
             
         except ValueError as e:
             logger.error(f"Error parsing input: {str(e)}")
             await update.message.reply_text(
                 f"❌ Error: {str(e)}\n\n"
                 "Please use the correct format:\n"
-                "/newRaw <job_title>;<location>;<job_type>;<remote_type>;<time_period>\n\n"
-                "Example: /newRaw Software Engineer;Germany;FULL_TIME;REMOTE;MINUTES_5\n\n"
+                "/newRaw <job_title>;<location>;<job_type>;<remote_type>;<time_period>[;<blacklist>]\n\n"
+                "Example: /newRaw Software Engineer;Germany;FULL_TIME;REMOTE;MINUTES_5;intern,senior,lead\n\n"
                 "Available values:\n"
                 "- Job types: FULL_TIME, PART_TIME, CONTRACT, TEMPORARY, INTERNSHIP\n"
                 "- Remote types: ON_SITE, REMOTE, HYBRID\n"
-                "- Time periods: MINUTES_5, MINUTES_15, MINUTES_30, MINUTES_60, HOURS_4"
+                "- Time periods: MINUTES_5, MINUTES_15, MINUTES_30, MINUTES_60, HOURS_4\n"
+                "- Blacklist: Optional, comma-separated words/phrases to exclude from job titles"
             )
         except Exception as e:
             logger.error(f"Error creating raw job search: {str(e)}", exc_info=True)
