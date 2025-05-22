@@ -439,7 +439,10 @@ class LinkedInScraper:
                 # Clean up the job type text
                 job_type = job_type.replace('Matches your job preferences, workplace type is ', '')
                 job_type = job_type.replace('Matches your job preferences, job type is ', '')
-                job_type = ' • '.join([t.strip() for t in job_type.split('\n') if t.strip()])
+                # Remove duplicates after splitting and stripping
+                job_type_parts = [t.strip() for t in job_type.split('\n') if t.strip()]
+                unique_job_type_parts = list(dict.fromkeys(job_type_parts))
+                job_type = ' • '.join(unique_job_type_parts)
 
             # Get the job link from the job title element
             try:
@@ -641,7 +644,8 @@ class LinkedInScraper:
 
     async def search_jobs(self, keywords: str, location: Optional[str] = None, max_pages: int = 10, 
                          job_types: Optional[List[str]] = None, remote_types: Optional[List[str]] = None,
-                         time_period: Optional[TimePeriod] = None, max_jobs: Optional[int] = None) -> List[JobListing]:
+                         time_period: Optional[TimePeriod] = None, max_jobs: Optional[int] = None,
+                         blacklist: Optional[List[str]] = None) -> List[JobListing]:
         """Search for jobs on LinkedIn using the provided keywords and location.
         
         Args:
@@ -652,6 +656,7 @@ class LinkedInScraper:
             remote_types: Optional list of remote types to filter by
             time_period: Optional TimePeriod enum to filter jobs by
             max_jobs: Optional maximum number of jobs to scrape (default: None, meaning no limit)
+            blacklist: Optional list of strings to filter out from job titles
         """
         if not self.page:
             raise RuntimeError("Browser not initialized")
@@ -719,6 +724,38 @@ class LinkedInScraper:
                         
                     job_details = await self._extract_job_details(card)
                     if job_details:
+                        # Blacklist filter
+                        if blacklist and any(b.lower() in job_details.title.lower() for b in blacklist):
+                            logger.info(f"Filtered out job '{job_details.title}' due to blacklist match.")
+                            continue
+                        # Keyword filter: must be in title or description
+                        keyword_lower = keywords.lower()
+                        if keyword_lower not in job_details.title.lower() and keyword_lower not in job_details.description.lower():
+                            logger.info(f"Filtered out job '{job_details.title}' because keyword '{keywords}' not in title or description.")
+                            continue
+                        # Job type and remote type filter
+                        job_type_str = job_details.job_type.lower() if job_details.job_type else ""
+                        job_type_match = False
+                        remote_type_match = False
+                        if job_types:
+                            for jt in job_types:
+                                jt_str = jt.value.lower() if hasattr(jt, 'value') else str(jt).lower()
+                                if jt_str in job_type_str:
+                                    job_type_match = True
+                                    break
+                        else:
+                            job_type_match = True  # No filter if not provided
+                        if remote_types:
+                            for rt in remote_types:
+                                rt_str = rt.value.lower() if hasattr(rt, 'value') else str(rt).lower()
+                                if rt_str in job_type_str:
+                                    remote_type_match = True
+                                    break
+                        else:
+                            remote_type_match = True  # No filter if not provided
+                        if not (job_type_match and remote_type_match):
+                            logger.info(f"Filtered out job '{job_details.title}' because job_type '{job_details.job_type}' does not match job_types or remote_types filter.")
+                            continue
                         all_jobs.append(job_details)
                         logger.info(f"Processed job: {job_details.title} at {job_details.company}")
                 
