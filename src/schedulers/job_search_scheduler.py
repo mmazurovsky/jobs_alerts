@@ -142,13 +142,16 @@ class JobSearchScheduler:
     async def _search_jobs_and_send_write_message_event(self, job_search: JobSearchOut):
         """Check a single job search for new listings."""
         try:
+            # Create a new browser session for this job search
+            scraper = LinkedInScraper()
+            await scraper.create_new_session()
             
             # Initialize sent_jobs set if it doesn't exist
             if job_search.id not in self._already_sent_jobs:
                 self._already_sent_jobs[job_search.id] = set()
             
             # Search for jobs
-            jobs = await self._scraper.search_jobs(
+            jobs = await scraper.search_jobs(
                 keywords=job_search.job_title,
                 location=job_search.location,
                 job_types=job_search.job_types,
@@ -205,6 +208,9 @@ class JobSearchScheduler:
                         source="job_search_scheduler"
                     ))
             
+            # Close the browser session
+            await scraper.close()
+            
         except Exception as e:
             logger.error(f"Error checking job search: {e}")
             # Create error message data instance
@@ -221,23 +227,18 @@ class JobSearchScheduler:
             ))
     
     async def _check_job_searches(self) -> None:
-        """Check all active job searches for new listings."""
+        """Check all active job searches for new listings concurrently."""
         logger.info(f"Checking {len(self._active_searches)} job searches")
-        for job_search in self._active_searches.values():
-            try:
-                logger.info(f"Processing job search: {job_search.id} for user {job_search.user_id}")
-                await self._search_jobs_and_send_write_message_event(job_search)
-            except Exception as e:
-                logger.error(f"Error checking job search {job_search.id}: {e}")
-                # Send error message to user
-                message_data = {
-                    "user_id": job_search.user_id,
-                    "message": f"Sorry, there was an error checking for new jobs for search '{job_search.job_title}'. Will try again later."
-                }
-                self._stream_manager.publish(StreamEvent(
-                    type=StreamType.SEND_MESSAGE,
-                    data=message_data,
-                    source="job_search_scheduler"
-                ))
-                # Continue with next search
-                continue 
+        
+        # Create tasks for all job searches
+        search_tasks = [
+            self._search_jobs_and_send_write_message_event(job_search)
+            for job_search in self._active_searches.values()
+        ]
+        
+        # Run all searches concurrently
+        try:
+            await asyncio.gather(*search_tasks)
+        except Exception as e:
+            logger.error(f"Error during concurrent job searches: {e}")
+            # Individual search errors are handled in _search_jobs_and_send_write_message_event 
