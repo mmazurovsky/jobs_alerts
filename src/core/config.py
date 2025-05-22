@@ -72,6 +72,12 @@ class Config:
         # Create save directory
         self.save_path.mkdir(parents=True, exist_ok=True)
         
+        # MongoDB settings
+        self.mongo_uri = os.getenv('MONGO_URL')
+        if not self.mongo_uri:
+            logger.error('MONGO_URL not found in environment variables')
+            raise RuntimeError('MONGO_URL not set in environment')
+        
         # Log the configuration (safely)
         self._log_config()
     

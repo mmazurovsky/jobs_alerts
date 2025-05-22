@@ -24,7 +24,7 @@ class JobSearchScheduler:
         self._scheduler = AsyncIOScheduler()
         self._active_searches: Dict[str, JobSearchOut] = {}  # search_id -> JobSearch
         self._already_sent_jobs: Dict[str, Set[str]] = {}  # search_id -> set of job_ids
-        self._running = True
+        self._running = False
         self._background_task = asyncio.create_task(self._run())
     
     async def initialize(self) -> None:
