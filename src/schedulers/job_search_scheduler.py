@@ -23,7 +23,7 @@ class JobSearchScheduler:
         self._stream_manager = stream_manager
         self._scheduler = AsyncIOScheduler()
         self._active_searches: Dict[str, JobSearchOut] = {}  # search_id -> JobSearch
-        self._already_sent_jobs: Dict[str, Set[str]] = {}  # search_id -> set of job_ids
+        self._sent_jobs_tracker = SentJobsTracker()  # Use SentJobsTracker for all users
         self._running = False
         self._background_task = None
     
@@ -56,7 +56,6 @@ class JobSearchScheduler:
         self._scheduler.shutdown()
         self._running = False
         self._active_searches.clear()
-        self._already_sent_jobs.clear()
         
         if self._background_task:
             self._background_task.cancel()
@@ -97,7 +96,6 @@ class JobSearchScheduler:
             # Only add if not already present
             if search.id not in self._active_searches:
                 self._active_searches[search.id] = search
-                self._already_sent_jobs[search.id] = set()
                 self._schedule_job_search(search)
                 logger.info(f"Added new job search: {search.id}")
             else:
@@ -114,10 +112,8 @@ class JobSearchScheduler:
                 if self._scheduler.get_job(job_id):
                     self._scheduler.remove_job(job_id)
                 
-                # Remove from active searches and sent jobs
+                # Remove from active searches
                 del self._active_searches[search_id]
-                if search_id in self._already_sent_jobs:
-                    del self._already_sent_jobs[search_id]
                 
                 logger.info(f"Removed job search: {search_id}")
             else:
@@ -146,29 +142,30 @@ class JobSearchScheduler:
             scraper = LinkedInScraper()
             await scraper.create_new_session()
             
-            # Initialize sent_jobs set if it doesn't exist
-            if job_search.id not in self._already_sent_jobs:
-                self._already_sent_jobs[job_search.id] = set()
-            
-            # Search for jobs
+            user_id = job_search.user_id
+            # Set max_pages=1 for 5-minute time period, else use default
+            max_pages = 1 if getattr(job_search.time_period, 'seconds', None) == 300 else 2
             jobs = await scraper.search_jobs(
                 keywords=job_search.job_title,
                 location=job_search.location,
                 job_types=job_search.job_types,
                 remote_types=job_search.remote_types,
-                time_period=job_search.time_period
+                time_period=job_search.time_period,
+                max_pages=max_pages
             )
             
             if jobs:
-                # Filter out jobs that have already been sent
+                # Filter out jobs that have already been sent to this user
                 new_jobs = [
                     job for job in jobs 
-                    if job.link not in self._already_sent_jobs[job_search.id]
+                    if not self._sent_jobs_tracker.is_job_sent(user_id, job.link)
                 ]
                 
                 if new_jobs:
                     # Format and send job listings
-                    message = "🔔 New job listings found!\n\n"
+                    message = (
+                        f"🔔 New job listings found for: {job_search.job_title} in {job_search.location}\n\n"
+                    )
                     for job in new_jobs:
                         message += (
                             f"🏢 {job.company}\n"
@@ -180,11 +177,11 @@ class JobSearchScheduler:
                     
                     # Mark jobs as sent
                     for job in new_jobs:
-                        self._already_sent_jobs[job_search.id].add(job.link)
+                        self._sent_jobs_tracker.mark_job_sent(user_id, job.link)
                     
                     # Create message data instance
                     message_data = {
-                        "user_id": job_search.user_id,
+                        "user_id": user_id,
                         "message": message
                     }
                     
@@ -197,7 +194,7 @@ class JobSearchScheduler:
                 else:
                     # Create message data instance
                     message_data = {
-                        "user_id": job_search.user_id,
+                        "user_id": user_id,
                         "message": "No new jobs found matching your criteria."
                     }
                     
