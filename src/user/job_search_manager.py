@@ -96,9 +96,9 @@ class JobSearchManager:
         return self.job_searches.get(user_id, [])
     
     async def get_active_job_searches(self) -> List[JobSearchOut]:
-        """Get all active job searches."""
+        """Get all job searches."""
         active_searches = []
         for searches in self.job_searches.values():
-            active_searches.extend([s for s in searches if s.is_active])
+            active_searches.extend(searches)
         return active_searches
     

@@ -80,8 +80,8 @@ class LinkedInScraper:
             
             # Create new page
             self.page = await self.context.new_page()
-            self.page.set_default_timeout(1000)  # 1 second timeout
-            self.page.set_default_navigation_timeout(5000)  # 5 seconds for navigation
+            self.page.set_default_timeout(30000)  # 30 seconds timeout
+            self.page.set_default_navigation_timeout(30000)  # 30 seconds for navigation
             
             logger.info("Browser and page initialized successfully")
             return True
@@ -171,7 +171,7 @@ class LinkedInScraper:
         search_input = None
         for selector in search_selectors:
             try:
-                search_input = await self.page.wait_for_selector(selector, timeout=2000)
+                search_input = await self.page.wait_for_selector(selector, timeout=5000)
                 if search_input:
                     logger.info(f"Found search input using selector: {selector}")
                     break
@@ -185,6 +185,12 @@ class LinkedInScraper:
         await search_input.fill("")  # Clear existing text
         await search_input.fill(keywords)
         await asyncio.sleep(0.5)
+
+        # Check if the search input was filled correctly
+        input_value = await search_input.input_value()
+        if not input_value:
+            logger.error("Search input field was not filled correctly.")
+            raise Exception("Search input field was not filled correctly.")
 
         if location:
             await self._fill_location_input(location)
@@ -201,20 +207,20 @@ class LinkedInScraper:
         location_input = None
         for selector in location_selectors:
             try:
-                location_input = await self.page.wait_for_selector(selector, timeout=2000)
+                location_input = await self.page.wait_for_selector(selector, timeout=5000)
                 if location_input:
                     logger.info(f"Found location input using selector: {selector}")
                     break
             except:
                 continue
 
-        if location_input:
-            await location_input.click()  # Ensure input is focused
-            await location_input.fill("")  # Clear existing text
-            await location_input.fill(location)
-            await asyncio.sleep(0.5)
-        else:
-            logger.warning("Could not find location input field")
+        if not location_input:
+            raise Exception("Could not find location input field")
+        
+        await location_input.click()  # Ensure input is focused
+        await location_input.fill("")  # Clear existing text
+        await location_input.fill(location)
+        await asyncio.sleep(0.5)
 
     async def _click_search_button(self):
         """Click the search button or submit with Enter key."""

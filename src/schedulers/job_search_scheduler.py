@@ -25,7 +25,7 @@ class JobSearchScheduler:
         self._active_searches: Dict[str, JobSearchOut] = {}  # search_id -> JobSearch
         self._already_sent_jobs: Dict[str, Set[str]] = {}  # search_id -> set of job_ids
         self._running = False
-        self._background_task = asyncio.create_task(self._run())
+        self._background_task = None
     
     async def initialize(self) -> None:
         """Initialize the scheduler."""
@@ -40,6 +40,9 @@ class JobSearchScheduler:
         # Start the APScheduler
         self._scheduler.start()
         self._running = True
+        
+        # Start the background task
+        self._background_task = asyncio.create_task(self._run())
         
         logger.info("Job search scheduler started")
     
@@ -67,11 +70,14 @@ class JobSearchScheduler:
     
     async def _run(self) -> None:
         """Run the scheduler loop."""
+        logger.info("Starting scheduler background task")
         while self._running:
             try:
+                logger.info(f"Checking {len(self._active_searches)} job searches")
                 await self._check_job_searches()
                 await asyncio.sleep(300)  # Check every 5 minutes
             except asyncio.CancelledError:
+                logger.info("Scheduler background task cancelled")
                 break
             except Exception as e:
                 logger.error(f"Error in scheduler loop: {e}")
@@ -216,8 +222,22 @@ class JobSearchScheduler:
     
     async def _check_job_searches(self) -> None:
         """Check all active job searches for new listings."""
+        logger.info(f"Checking {len(self._active_searches)} job searches")
         for job_search in self._active_searches.values():
             try:
+                logger.info(f"Processing job search: {job_search.id} for user {job_search.user_id}")
                 await self._search_jobs_and_send_write_message_event(job_search)
             except Exception as e:
-                logger.error(f"Error checking job search {job_search.id}: {e}") 
+                logger.error(f"Error checking job search {job_search.id}: {e}")
+                # Send error message to user
+                message_data = {
+                    "user_id": job_search.user_id,
+                    "message": f"Sorry, there was an error checking for new jobs for search '{job_search.job_title}'. Will try again later."
+                }
+                self._stream_manager.publish(StreamEvent(
+                    type=StreamType.SEND_MESSAGE,
+                    data=message_data,
+                    source="job_search_scheduler"
+                ))
+                # Continue with next search
+                continue 
