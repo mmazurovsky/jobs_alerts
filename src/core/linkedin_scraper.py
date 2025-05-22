@@ -80,8 +80,8 @@ class LinkedInScraper:
             
             # Create new page
             self.page = await self.context.new_page()
-            self.page.set_default_timeout(1000)  # 1 second timeout
-            self.page.set_default_navigation_timeout(5000)  # 5 seconds for navigation
+            self.page.set_default_timeout(30000)  # 30 seconds timeout
+            self.page.set_default_navigation_timeout(30000)  # 30 seconds for navigation
             
             logger.info("Browser and page initialized successfully")
             return True
@@ -96,25 +96,34 @@ class LinkedInScraper:
                 logger.error("Browser not initialized")
                 return False
                 
-            # Check existing session
-            if self.state_file.exists():
-                await self.page.goto("https://www.linkedin.com/feed/", timeout=30000)  # Increased timeout
-                await asyncio.sleep(2)  # Increased wait time
-                if "feed" in self.page.url:
-                    logger.info("Successfully restored LinkedIn session")
-                    return True
+            # Always perform a fresh login
+            logger.info("Performing fresh login to LinkedIn...")
+            await self.page.goto("https://www.linkedin.com/login", timeout=30000)
+            await asyncio.sleep(2)
             
-            # Login with credentials
-            await self.page.goto("https://www.linkedin.com/login", timeout=30000)  # Increased timeout
-            await asyncio.sleep(2)  # Increased wait time
-            
-            # Fill login form
-            await self.page.fill("#username", config.linkedin_email)
-            await self.page.fill("#password", config.linkedin_password)
-            await self.page.click("button[type='submit']")
-            
-            # Wait longer for login to complete
-            await asyncio.sleep(5)  # Increased wait time
+            # Check if we're on the "Welcome back" page
+            welcome_heading = await self.page.query_selector('h1.header__content__heading')
+            if welcome_heading:
+                heading_text = await welcome_heading.inner_text()
+                if "Welcome Back" in heading_text:
+                    logger.info("Detected 'Welcome back' login page")
+                    
+                    # Find and click the member profile button
+                    profile_button = await self.page.query_selector('button.member-profile__details')
+                    if profile_button:
+                        logger.info("Found member profile button, clicking...")
+                        await profile_button.click()
+                        await asyncio.sleep(5)  # Wait longer for login to complete
+                    else:
+                        logger.error("Could not find member profile button")
+                        return False
+            else:
+                # Regular login page
+                logger.info("On regular login page, filling credentials...")
+                await self.page.fill("#username", config.linkedin_email)
+                await self.page.fill("#password", config.linkedin_password)
+                await self.page.click("button[type='submit']")
+                await asyncio.sleep(5)
             
             # Check if we're on the feed page or any other LinkedIn page
             if "linkedin.com" in self.page.url and "login" not in self.page.url:
@@ -162,7 +171,7 @@ class LinkedInScraper:
         search_input = None
         for selector in search_selectors:
             try:
-                search_input = await self.page.wait_for_selector(selector, timeout=2000)
+                search_input = await self.page.wait_for_selector(selector, timeout=5000)
                 if search_input:
                     logger.info(f"Found search input using selector: {selector}")
                     break
@@ -176,6 +185,12 @@ class LinkedInScraper:
         await search_input.fill("")  # Clear existing text
         await search_input.fill(keywords)
         await asyncio.sleep(0.5)
+
+        # Check if the search input was filled correctly
+        input_value = await search_input.input_value()
+        if not input_value:
+            logger.error("Search input field was not filled correctly.")
+            raise Exception("Search input field was not filled correctly.")
 
         if location:
             await self._fill_location_input(location)
@@ -192,20 +207,20 @@ class LinkedInScraper:
         location_input = None
         for selector in location_selectors:
             try:
-                location_input = await self.page.wait_for_selector(selector, timeout=2000)
+                location_input = await self.page.wait_for_selector(selector, timeout=5000)
                 if location_input:
                     logger.info(f"Found location input using selector: {selector}")
                     break
             except:
                 continue
 
-        if location_input:
-            await location_input.click()  # Ensure input is focused
-            await location_input.fill("")  # Clear existing text
-            await location_input.fill(location)
-            await asyncio.sleep(0.5)
-        else:
-            logger.warning("Could not find location input field")
+        if not location_input:
+            raise Exception("Could not find location input field")
+        
+        await location_input.click()  # Ensure input is focused
+        await location_input.fill("")  # Clear existing text
+        await location_input.fill(location)
+        await asyncio.sleep(0.5)
 
     async def _click_search_button(self):
         """Click the search button or submit with Enter key."""
@@ -254,40 +269,33 @@ class LinkedInScraper:
         """
         logger.info("Waiting for job search results to load...")
         
-        # Wait for the job cards container - try multiple selectors
-        container_selectors = [
-            "div.jobs-search-results-list",
-            "div.scaffold-layout__list",
-            "div.jobs-search-results-list__list",
-            "#main > div > div.scaffold-layout__list-detail-inner.scaffold-layout__list-detail-inner--grow > div.scaffold-layout__list > div"
-        ]
+        # Wait for the job cards container - use the exact selector for the left side scrollable area
+        container_selector = "#main > div > div.scaffold-layout__list-detail-inner.scaffold-layout__list-detail-inner--grow > div.scaffold-layout__list > div"
         
-        job_cards_container = None
-        for selector in container_selectors:
-            try:
-                job_cards_container = await self.page.wait_for_selector(
-                    selector,
-                    timeout=5000,
-                    state="visible"
-                )
-                if job_cards_container:
-                    logger.info(f"Found job cards container using selector: {selector}")
-                    break
-            except Exception as e:
-                continue
-                
-        if not job_cards_container:
-            logger.warning("Could not find job cards container with any selector")
+        try:
+            job_cards_container = await self.page.wait_for_selector(
+                container_selector,
+                timeout=5000,
+                state="visible"
+            )
+            if job_cards_container:
+                logger.info("Found job cards container")
+            else:
+                logger.warning("Could not find job cards container")
+                return []
+        except Exception as e:
+            logger.warning(f"Error finding job cards container: {e}")
             return []
 
         # Wait for initial job cards to load
-        await asyncio.sleep(2)
+        await asyncio.sleep(1)
         
         job_cards = []
         seen_job_ids = set()  # Track seen job IDs
-        last_height = 0
         scroll_attempts = 0
         max_scroll_attempts = 10
+        last_card_count = 0
+        no_new_cards_count = 0
         
         while scroll_attempts < max_scroll_attempts:
             # Get current job cards
@@ -295,6 +303,7 @@ class LinkedInScraper:
             logger.info(f"Found {len(current_cards)} job cards in current view")
             
             # Update job cards list with new unique cards
+            new_cards_found = False
             for card in current_cards:
                 try:
                     # Get the job ID from the card
@@ -312,33 +321,72 @@ class LinkedInScraper:
                     if job_id not in seen_job_ids:
                         seen_job_ids.add(job_id)
                         job_cards.append(card)
+                        new_cards_found = True
                         logger.info(f"Added new unique job card with ID: {job_id}")
                 except Exception as e:
                     logger.warning(f"Error extracting job ID from card: {e}")
                     continue
                     
             logger.info(f"Total unique job cards found: {len(job_cards)}")
-                    
+            
             # Check if we have enough jobs
             if max_jobs is not None and len(job_cards) >= max_jobs:
                 logger.info(f"Found {len(job_cards)} jobs, stopping scroll")
                 break
                 
-            # Scroll to bottom of container
-            current_height = await job_cards_container.evaluate("element => element.scrollHeight")
-            await job_cards_container.evaluate(f"element => element.scrollTo(0, {current_height})")
-            
-            # Wait for new content to load
-            await asyncio.sleep(1)
-            
-            # Check if we've reached the bottom
-            new_height = await job_cards_container.evaluate("element => element.scrollHeight")
-            if new_height == last_height:
-                scroll_attempts += 1
-                logger.info(f"Reached bottom of page (attempt {scroll_attempts}/{max_scroll_attempts})")
+            # Check if we found any new cards
+            if not new_cards_found:
+                no_new_cards_count += 1
+                if no_new_cards_count >= 3:  # If no new cards found after 3 attempts, stop scrolling
+                    logger.info("No new cards found after multiple attempts, stopping scroll")
+                    break
             else:
-                scroll_attempts = 0
-                last_height = new_height
+                no_new_cards_count = 0
+            
+            # Optimized scrolling approach for the left side container
+            try:
+                # Focus the container first
+                await job_cards_container.focus()
+                await asyncio.sleep(0.5)
+                
+                # Proactive scrolling with smaller increments
+                await self.page.evaluate('''
+                    () => {
+                        const container = document.querySelector('#main > div > div.scaffold-layout__list-detail-inner.scaffold-layout__list-detail-inner--grow > div.scaffold-layout__list > div');
+                        if (container) {
+                            // Get the current scroll position and container height
+                            const currentScroll = container.scrollTop;
+                            const containerHeight = container.clientHeight;
+                            
+                            // Calculate a smaller scroll increment (about 2-3 cards worth)
+                            const scrollIncrement = Math.min(containerHeight, 800);
+                            
+                            // Scroll by the increment
+                            container.scrollBy({
+                                top: scrollIncrement,
+                                behavior: 'auto'
+                            });
+                            
+                            // Log scroll position for debugging
+                            console.log('Scrolled from', currentScroll, 'to', container.scrollTop);
+                        }
+                    }
+                ''')
+                
+                # Wait for potential new content to load
+                await asyncio.sleep(1.5)
+                
+            except Exception as e:
+                logger.warning(f"Error during scrolling: {e}")
+                # Try a simple fallback
+                try:
+                    await self.page.keyboard.press('Space')
+                    await asyncio.sleep(1)
+                except Exception as e2:
+                    logger.warning(f"Fallback scroll also failed: {e2}")
+            
+            scroll_attempts += 1
+            logger.info(f"Scroll attempt {scroll_attempts}/{max_scroll_attempts}")
                 
         logger.info(f"Final count: Found {len(job_cards)} unique job cards after scrolling")
         return job_cards[:max_jobs] if max_jobs is not None else job_cards
@@ -603,7 +651,6 @@ class LinkedInScraper:
         except Exception as e:
             logger.error(f"Error applying filters: {str(e)}")
             return False
-
     async def search_jobs(self, keywords: str, location: Optional[str] = None, max_pages: int = 10, 
                          job_types: Optional[List[str]] = None, remote_types: Optional[List[str]] = None,
                          time_period: Optional[TimePeriod] = None, max_jobs: Optional[int] = None) -> List[JobListing]:
@@ -625,7 +672,30 @@ class LinkedInScraper:
         current_page = 1
         
         try:
-            # Initial search with time period filter
+            # First ensure we're logged in
+            logger.info("Verifying LinkedIn login status...")
+            await self.page.goto("https://www.linkedin.com/feed/", timeout=30000)
+            await asyncio.sleep(2)
+            
+            # Check if we're on the login page or if feed content is missing
+            login_form = await self.page.query_selector('#username')
+            feed_content = await self.page.query_selector('.feed-shared-update-v2')
+            
+            if login_form or not feed_content:
+                logger.info("Not logged in or session invalid - attempting to login...")
+                login_success = await self.login()
+                if not login_success:
+                    raise Exception("Failed to login to LinkedIn")
+                await asyncio.sleep(2)
+                
+                # Verify login was successful
+                await self.page.goto("https://www.linkedin.com/feed/", timeout=30000)
+                await asyncio.sleep(1)
+                feed_content = await self.page.query_selector('.feed-shared-update-v2')
+                if not feed_content:
+                    raise Exception("Login verification failed - could not find feed content")
+            
+            # Now proceed with job search
             time_period_seconds = time_period.seconds if time_period else None
             await self._navigate_to_jobs_page(time_period_seconds)
             await self._fill_search_inputs(keywords, location)
@@ -639,7 +709,7 @@ class LinkedInScraper:
                     logger.warning("Failed to apply filters, continuing with unfiltered results")
                 
             # Check for no results banner after applying filters
-            await asyncio.sleep(2)  # Wait for results to update
+            await asyncio.sleep(1)  # Wait for results to update
             no_results_banner = await self.page.query_selector('.jobs-search-no-results-banner__image')
             if no_results_banner:
                 logger.info("No jobs found matching the search criteria")
@@ -690,3 +760,4 @@ class LinkedInScraper:
         self.context = None
         self.page = None
         self.playwright = None
+
