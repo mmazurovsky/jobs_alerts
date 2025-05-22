@@ -651,6 +651,7 @@ class LinkedInScraper:
         except Exception as e:
             logger.error(f"Error applying filters: {str(e)}")
             return False
+
     async def search_jobs(self, keywords: str, location: Optional[str] = None, max_pages: int = 10, 
                          job_types: Optional[List[str]] = None, remote_types: Optional[List[str]] = None,
                          time_period: Optional[TimePeriod] = None, max_jobs: Optional[int] = None) -> List[JobListing]:
@@ -749,7 +750,12 @@ class LinkedInScraper:
         except Exception as e:
             logger.error(f"Error during job search: {str(e)}")
             return all_jobs
-            
+
+    async def create_new_session(self):
+        """Create a new browser session for a job search."""
+        await self.initialize()
+        return self
+
     async def close(self):
         """Close the browser and cleanup."""
         if self.browser:
