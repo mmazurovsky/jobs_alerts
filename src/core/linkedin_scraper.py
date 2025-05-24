@@ -3,6 +3,7 @@ LinkedIn job scraper implementation using Playwright.
 """
 import asyncio
 import logging
+import os
 from typing import List, Optional, Dict
 from datetime import datetime
 from pathlib import Path
@@ -441,7 +442,13 @@ class LinkedInScraper:
                 job_type = job_type.replace('Matches your job preferences, job type is ', '')
                 # Remove duplicates after splitting and stripping
                 job_type_parts = [t.strip() for t in job_type.split('\n') if t.strip()]
-                unique_job_type_parts = list(dict.fromkeys(job_type_parts))
+                seen = set()
+                unique_job_type_parts = []
+                for part in job_type_parts:
+                    normalized = part.replace('.', '').replace(' ', '').lower()
+                    if normalized not in seen:
+                        seen.add(normalized)
+                        unique_job_type_parts.append(part)
                 job_type = ' • '.join(unique_job_type_parts)
 
             # Get the job link from the job title element
@@ -686,6 +693,13 @@ class LinkedInScraper:
                 await asyncio.sleep(1)
                 feed_content = await self.page.query_selector('.feed-shared-update-v2')
                 if not feed_content:
+                    # Save screenshot for debugging
+                    screenshots_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'screenshots')
+                    os.makedirs(screenshots_dir, exist_ok=True)
+                    from datetime import datetime
+                    screenshot_path = os.path.join(screenshots_dir, f'login_failed_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png')
+                    await self.page.screenshot(path=screenshot_path)
+                    logger.error(f"Login verification failed - could not find feed content. Screenshot saved to {screenshot_path}")
                     raise Exception("Login verification failed - could not find feed content")
             
             # Now proceed with job search
