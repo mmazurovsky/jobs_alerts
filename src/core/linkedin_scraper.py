@@ -3,6 +3,7 @@ LinkedIn job scraper implementation using Playwright.
 """
 import asyncio
 import logging
+import os
 from typing import List, Optional, Dict
 from datetime import datetime
 from pathlib import Path
@@ -41,7 +42,7 @@ class LinkedInScraper:
             
             # Launch Chromium with specific settings
             self.browser = await self.playwright.chromium.launch(
-                headless=False,  # Make browser visible
+                headless=True,  # Run browser in headless mode
                 args=[
                     "--no-sandbox",
                     "--disable-setuid-sandbox",
@@ -51,7 +52,12 @@ class LinkedInScraper:
                     "--window-size=1920,1080",
                     "--disable-web-security",
                     "--disable-features=IsolateOrigins,site-per-process",
-                    "--disable-site-isolation-trials"
+                    "--disable-site-isolation-trials",
+                    "--disable-font-subpixel-positioning",
+                    "--disable-remote-fonts",
+                    "--disable-google-fonts",
+                    "--disable-font-antialiasing",
+                    "--font-render-hinting=none"
                 ],
                 chromium_sandbox=False
             )
@@ -66,7 +72,8 @@ class LinkedInScraper:
                 "is_mobile": False,
                 "locale": "en-US",
                 "timezone_id": "America/New_York",
-                "permissions": ["geolocation"]
+                "permissions": ["geolocation"],
+                "bypass_csp": True
             }
             
             # Try to load existing state if available
@@ -433,7 +440,16 @@ class LinkedInScraper:
                 # Clean up the job type text
                 job_type = job_type.replace('Matches your job preferences, workplace type is ', '')
                 job_type = job_type.replace('Matches your job preferences, job type is ', '')
-                job_type = ' • '.join([t.strip() for t in job_type.split('\n') if t.strip()])
+                # Remove duplicates after splitting and stripping
+                job_type_parts = [t.strip() for t in job_type.split('\n') if t.strip()]
+                seen = set()
+                unique_job_type_parts = []
+                for part in job_type_parts:
+                    normalized = part.replace('.', '').replace(' ', '').lower()
+                    if normalized not in seen:
+                        seen.add(normalized)
+                        unique_job_type_parts.append(part)
+                job_type = ' • '.join(unique_job_type_parts)
 
             # Get the job link from the job title element
             try:
@@ -534,7 +550,7 @@ class LinkedInScraper:
             # Click the "All filters" button to open the filter panel
             all_filters_button = await self.page.wait_for_selector(
                 'button[aria-label="Show all filters. Clicking this button displays all available filter options."]',
-                timeout=5000,
+                timeout=10000,
                 state="visible"
             )
             
@@ -545,97 +561,78 @@ class LinkedInScraper:
             await all_filters_button.click()
             await asyncio.sleep(1.5)  # Wait for filter panel to open
             
-            # Find the modal content container
-            modal_content = await self.page.wait_for_selector(
-                '.artdeco-modal__content',
-                timeout=5000,
-                state="visible"
-            )
-            
-            if not modal_content:
-                logger.error("Could not find modal content")
-                return False
-            
-            # Scroll the modal content to make all filters visible
-            await modal_content.evaluate('''
-                element => {
-                    element.scrollTop = element.scrollHeight;
-                    // Additional scroll to ensure we reach the bottom
-                    setTimeout(() => {
-                        element.scrollTop = element.scrollHeight;
-                    }, 100);
-                }
-            ''')
-            await asyncio.sleep(1)  # Wait for scroll to complete
-            
-            # Apply job type filters if provided
+            # Find the modal content first
+            modal_content = await self.page.wait_for_selector('.artdeco-modal__content', timeout=10000, state="visible")
+
+            # Scroll the modal content to the bottom to ensure all filters are loaded
+            await modal_content.evaluate('el => { el.scrollTop = el.scrollHeight; }')
+            await asyncio.sleep(0.5)
+
+            # Mapping for job type and remote type codes
+            job_type_map = {
+                "Full-time": "F",
+                "Part-time": "P",
+                "Contract": "C",
+                "Temporary": "T",
+            }
+            remote_type_map = {
+                "On-site": "1",
+                "Remote": "2",
+                "Hybrid": "3",
+            }
+
+            # For job types
             if job_types:
                 for job_type in job_types:
-                    # Map job type to the corresponding value
-                    job_type_map = {
-                        "Full-time": "F",
-                        "Part-time": "P",
-                        "Contract": "C",
-                        "Temporary": "T",
-                        "Internship": "I"
-                    }
-                    
-                    job_type_value = job_type.value if hasattr(job_type, 'value') else job_type
-                    if job_type_value in job_type_map:
-                        value = job_type_map[job_type_value]
-                        label_selector = f'label[for="advanced-filter-jobType-{value}"]'
-                        
-                        # Find and click the label
-                        label = await self.page.wait_for_selector(label_selector, timeout=2000)
-                        if label:
-                            # Scroll the label into view within the modal
-                            await label.scroll_into_view_if_needed()
-                            await asyncio.sleep(0.5)
-                            
-                            # Check if the associated checkbox is already checked
-                            checkbox = await self.page.query_selector(f'#advanced-filter-jobType-{value}')
-                            if checkbox:
-                                is_checked = await checkbox.is_checked()
-                                if not is_checked:
-                                    await label.click()
-                                    await asyncio.sleep(0.5)
-                                    logger.info(f"Applied job type filter: {job_type_value}")
-            
-            # Apply remote type filters if provided
+                    jt = job_type.value if hasattr(job_type, 'value') else job_type
+                    code = job_type_map.get(jt)
+                    if not code:
+                        logger.warning(f"No code mapping for job type: {jt}")
+                        continue
+                    label_selector = f'label[for="advanced-filter-jobType-{code}"]'
+                    label = await modal_content.wait_for_selector(label_selector, timeout=10000)
+                    if label:
+                        await label.scroll_into_view_if_needed()
+                        await asyncio.sleep(0.5)
+                        checkbox = await modal_content.query_selector(f'input#advanced-filter-jobType-{code}')
+                        if checkbox:
+                            is_checked = await checkbox.is_checked()
+                            if not is_checked:
+                                await label.click()
+                                await asyncio.sleep(0.5)
+                                logger.info(f"Clicked label for job type filter: {jt}")
+                    else:
+                        logger.error(f"Could not find label for job type: {jt}")
+                    await asyncio.sleep(0.5)
+
+            # For remote types
             if remote_types:
                 for remote_type in remote_types:
-                    # Map remote type to the corresponding value
-                    remote_type_map = {
-                        "Hybrid": "3",
-                        "On-site": "1",
-                        "Remote": "2"
-                    }
-                    
-                    remote_type_value = remote_type.value if hasattr(remote_type, 'value') else remote_type
-                    if remote_type_value in remote_type_map:
-                        value = remote_type_map[remote_type_value]
-                        label_selector = f'label[for="advanced-filter-workplaceType-{value}"]'
-                        
-                        # Find and click the label
-                        label = await self.page.wait_for_selector(label_selector, timeout=2000)
-                        if label:
-                            # Scroll the label into view within the modal
-                            await label.scroll_into_view_if_needed()
-                            await asyncio.sleep(0.5)
-                            
-                            # Check if the associated checkbox is already checked
-                            checkbox = await self.page.query_selector(f'#advanced-filter-workplaceType-{value}')
-                            if checkbox:
-                                is_checked = await checkbox.is_checked()
-                                if not is_checked:
-                                    await label.click()
-                                    await asyncio.sleep(0.5)
-                                    logger.info(f"Applied remote type filter: {remote_type_value}")
-            
+                    rt = remote_type.value if hasattr(remote_type, 'value') else remote_type
+                    code = remote_type_map.get(rt)
+                    if not code:
+                        logger.warning(f"No code mapping for remote type: {rt}")
+                        continue
+                    label_selector = f'label[for="advanced-filter-workplaceType-{code}"]'
+                    label = await modal_content.wait_for_selector(label_selector, timeout=10000)
+                    if label:
+                        await label.scroll_into_view_if_needed()
+                        await asyncio.sleep(0.5)
+                        checkbox = await modal_content.query_selector(f'input#advanced-filter-workplaceType-{code}')
+                        if checkbox:
+                            is_checked = await checkbox.is_checked()
+                            if not is_checked:
+                                await label.click()
+                                await asyncio.sleep(0.5)
+                                logger.info(f"Clicked label for remote type filter: {rt}")
+                    else:
+                        logger.error(f"Could not find label for remote type: {rt}")
+                    await asyncio.sleep(0.5)
+
             # Click the "Show results" button
             show_results_button = await self.page.wait_for_selector(
                 'button[data-test-reusables-filters-modal-show-results-button="true"]',
-                timeout=2000,
+                timeout=10000,
                 state="visible"
             )
             
@@ -651,9 +648,11 @@ class LinkedInScraper:
         except Exception as e:
             logger.error(f"Error applying filters: {str(e)}")
             return False
+
     async def search_jobs(self, keywords: str, location: Optional[str] = None, max_pages: int = 10, 
                          job_types: Optional[List[str]] = None, remote_types: Optional[List[str]] = None,
-                         time_period: Optional[TimePeriod] = None, max_jobs: Optional[int] = None) -> List[JobListing]:
+                         time_period: Optional[TimePeriod] = None, max_jobs: Optional[int] = None,
+                         blacklist: Optional[List[str]] = None) -> List[JobListing]:
         """Search for jobs on LinkedIn using the provided keywords and location.
         
         Args:
@@ -664,6 +663,7 @@ class LinkedInScraper:
             remote_types: Optional list of remote types to filter by
             time_period: Optional TimePeriod enum to filter jobs by
             max_jobs: Optional maximum number of jobs to scrape (default: None, meaning no limit)
+            blacklist: Optional list of strings to filter out from job titles
         """
         if not self.page:
             raise RuntimeError("Browser not initialized")
@@ -675,7 +675,7 @@ class LinkedInScraper:
             # First ensure we're logged in
             logger.info("Verifying LinkedIn login status...")
             await self.page.goto("https://www.linkedin.com/feed/", timeout=30000)
-            await asyncio.sleep(2)
+            await asyncio.sleep(1)
             
             # Check if we're on the login page or if feed content is missing
             login_form = await self.page.query_selector('#username')
@@ -686,13 +686,20 @@ class LinkedInScraper:
                 login_success = await self.login()
                 if not login_success:
                     raise Exception("Failed to login to LinkedIn")
-                await asyncio.sleep(2)
+                await asyncio.sleep(1)
                 
                 # Verify login was successful
                 await self.page.goto("https://www.linkedin.com/feed/", timeout=30000)
                 await asyncio.sleep(1)
                 feed_content = await self.page.query_selector('.feed-shared-update-v2')
                 if not feed_content:
+                    # Save screenshot for debugging
+                    screenshots_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'screenshots')
+                    os.makedirs(screenshots_dir, exist_ok=True)
+                    from datetime import datetime
+                    screenshot_path = os.path.join(screenshots_dir, f'login_failed_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png')
+                    await self.page.screenshot(path=screenshot_path)
+                    logger.error(f"Login verification failed - could not find feed content. Screenshot saved to {screenshot_path}")
                     raise Exception("Login verification failed - could not find feed content")
             
             # Now proceed with job search
@@ -731,6 +738,38 @@ class LinkedInScraper:
                         
                     job_details = await self._extract_job_details(card)
                     if job_details:
+                        # Blacklist filter
+                        if blacklist and any(b.lower() in job_details.title.lower() for b in blacklist):
+                            logger.info(f"Filtered out job '{job_details.title}' due to blacklist match.")
+                            continue
+                        # Keyword filter: must be in title or description
+                        keyword_lower = keywords.lower()
+                        if keyword_lower not in job_details.title.lower() and keyword_lower not in job_details.description.lower():
+                            logger.info(f"Filtered out job '{job_details.title}' because keyword '{keywords}' not in title or description.")
+                            continue
+                        # Job type and remote type filter
+                        job_type_str = job_details.job_type.lower() if job_details.job_type else ""
+                        job_type_match = False
+                        remote_type_match = False
+                        if job_types:
+                            for jt in job_types:
+                                jt_str = jt.value.lower() if hasattr(jt, 'value') else str(jt).lower()
+                                if jt_str in job_type_str:
+                                    job_type_match = True
+                                    break
+                        else:
+                            job_type_match = True  # No filter if not provided
+                        if remote_types:
+                            for rt in remote_types:
+                                rt_str = rt.value.lower() if hasattr(rt, 'value') else str(rt).lower()
+                                if rt_str in job_type_str:
+                                    remote_type_match = True
+                                    break
+                        else:
+                            remote_type_match = True  # No filter if not provided
+                        if not (job_type_match and remote_type_match):
+                            logger.info(f"Filtered out job '{job_details.title}' because job_type '{job_details.job_type}' does not match job_types or remote_types filter.")
+                            continue
                         all_jobs.append(job_details)
                         logger.info(f"Processed job: {job_details.title} at {job_details.company}")
                 
@@ -749,7 +788,12 @@ class LinkedInScraper:
         except Exception as e:
             logger.error(f"Error during job search: {str(e)}")
             return all_jobs
-            
+
+    async def create_new_session(self):
+        """Create a new browser session for a job search."""
+        await self.initialize()
+        return self
+
     async def close(self):
         """Close the browser and cleanup."""
         if self.browser:

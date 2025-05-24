@@ -23,9 +23,7 @@ class JobSearchScheduler:
         self._stream_manager = stream_manager
         self._scheduler = AsyncIOScheduler()
         self._active_searches: Dict[str, JobSearchOut] = {}  # search_id -> JobSearch
-        self._already_sent_jobs: Dict[str, Set[str]] = {}  # search_id -> set of job_ids
-        self._running = False
-        self._background_task = None
+        self._sent_jobs_tracker = SentJobsTracker()  # Use SentJobsTracker for all users
     
     async def initialize(self) -> None:
         """Initialize the scheduler."""
@@ -33,55 +31,16 @@ class JobSearchScheduler:
     
     async def start(self) -> None:
         """Start the scheduler."""
-        if self._running:
-            logger.warning("Scheduler is already running")
-            return
-        
         # Start the APScheduler
         self._scheduler.start()
-        self._running = True
-        
-        # Start the background task
-        self._background_task = asyncio.create_task(self._run())
-        
         logger.info("Job search scheduler started")
     
     async def stop(self) -> None:
         """Stop the scheduler."""
-        if not self._running:
-            logger.warning("Scheduler is not running")
-            return
-        
         # Shutdown the APScheduler
         self._scheduler.shutdown()
-        self._running = False
         self._active_searches.clear()
-        self._already_sent_jobs.clear()
-        
-        if self._background_task:
-            self._background_task.cancel()
-            try:
-                await self._background_task
-            except asyncio.CancelledError:
-                pass
-            self._background_task = None
-        
         logger.info("Job search scheduler stopped")
-    
-    async def _run(self) -> None:
-        """Run the scheduler loop."""
-        logger.info("Starting scheduler background task")
-        while self._running:
-            try:
-                logger.info(f"Checking {len(self._active_searches)} job searches")
-                await self._check_job_searches()
-                await asyncio.sleep(300)  # Check every 5 minutes
-            except asyncio.CancelledError:
-                logger.info("Scheduler background task cancelled")
-                break
-            except Exception as e:
-                logger.error(f"Error in scheduler loop: {e}")
-                await asyncio.sleep(60)  # Wait a bit before retrying
     
     async def add_initial_job_searches(self, job_searches: List[JobSearchOut]) -> None:
         """Add initial job searches from manager."""
@@ -97,7 +56,6 @@ class JobSearchScheduler:
             # Only add if not already present
             if search.id not in self._active_searches:
                 self._active_searches[search.id] = search
-                self._already_sent_jobs[search.id] = set()
                 self._schedule_job_search(search)
                 logger.info(f"Added new job search: {search.id}")
             else:
@@ -114,10 +72,8 @@ class JobSearchScheduler:
                 if self._scheduler.get_job(job_id):
                     self._scheduler.remove_job(job_id)
                 
-                # Remove from active searches and sent jobs
+                # Remove from active searches
                 del self._active_searches[search_id]
-                if search_id in self._already_sent_jobs:
-                    del self._already_sent_jobs[search_id]
                 
                 logger.info(f"Removed job search: {search_id}")
             else:
@@ -142,30 +98,35 @@ class JobSearchScheduler:
     async def _search_jobs_and_send_write_message_event(self, job_search: JobSearchOut):
         """Check a single job search for new listings."""
         try:
+            # Create a new browser session for this job search
+            scraper = LinkedInScraper()
+            await scraper.create_new_session()
             
-            # Initialize sent_jobs set if it doesn't exist
-            if job_search.id not in self._already_sent_jobs:
-                self._already_sent_jobs[job_search.id] = set()
-            
-            # Search for jobs
-            jobs = await self._scraper.search_jobs(
+            user_id = job_search.user_id
+            # Set max_pages=1 for 5-minute time period, else use default
+            max_pages = 1 if getattr(job_search.time_period, 'seconds', None) == 300 else 2
+            jobs = await scraper.search_jobs(
                 keywords=job_search.job_title,
                 location=job_search.location,
                 job_types=job_search.job_types,
                 remote_types=job_search.remote_types,
-                time_period=job_search.time_period
+                time_period=job_search.time_period,
+                max_pages=max_pages,
+                blacklist=job_search.blacklist,
             )
             
             if jobs:
-                # Filter out jobs that have already been sent
+                # Filter out jobs that have already been sent to this user
                 new_jobs = [
                     job for job in jobs 
-                    if job.link not in self._already_sent_jobs[job_search.id]
+                    if not self._sent_jobs_tracker.is_job_sent(user_id, job.link)
                 ]
                 
                 if new_jobs:
                     # Format and send job listings
-                    message = "🔔 New job listings found!\n\n"
+                    message = (
+                        f"🔔 New job listings found for: {job_search.job_title} in {job_search.location}\n\n"
+                    )
                     for job in new_jobs:
                         message += (
                             f"🏢 {job.company}\n"
@@ -177,11 +138,11 @@ class JobSearchScheduler:
                     
                     # Mark jobs as sent
                     for job in new_jobs:
-                        self._already_sent_jobs[job_search.id].add(job.link)
+                        self._sent_jobs_tracker.mark_job_sent(user_id, job.link)
                     
                     # Create message data instance
                     message_data = {
-                        "user_id": job_search.user_id,
+                        "user_id": user_id,
                         "message": message
                     }
                     
@@ -192,18 +153,10 @@ class JobSearchScheduler:
                         source="job_search_scheduler"
                     ))
                 else:
-                    # Create message data instance
-                    message_data = {
-                        "user_id": job_search.user_id,
-                        "message": "No new jobs found matching your criteria."
-                    }
-                    
-                    # Send message through stream manager
-                    self._stream_manager.publish(StreamEvent(
-                        type=StreamType.SEND_MESSAGE,
-                        data=message_data,
-                        source="job_search_scheduler"
-                    ))
+                    logger.info(f"No new jobs found for {job_search.job_title} in {job_search.location}")
+            
+            # Close the browser session
+            await scraper.close()
             
         except Exception as e:
             logger.error(f"Error checking job search: {e}")
@@ -221,23 +174,18 @@ class JobSearchScheduler:
             ))
     
     async def _check_job_searches(self) -> None:
-        """Check all active job searches for new listings."""
+        """Check all active job searches for new listings concurrently."""
         logger.info(f"Checking {len(self._active_searches)} job searches")
-        for job_search in self._active_searches.values():
-            try:
-                logger.info(f"Processing job search: {job_search.id} for user {job_search.user_id}")
-                await self._search_jobs_and_send_write_message_event(job_search)
-            except Exception as e:
-                logger.error(f"Error checking job search {job_search.id}: {e}")
-                # Send error message to user
-                message_data = {
-                    "user_id": job_search.user_id,
-                    "message": f"Sorry, there was an error checking for new jobs for search '{job_search.job_title}'. Will try again later."
-                }
-                self._stream_manager.publish(StreamEvent(
-                    type=StreamType.SEND_MESSAGE,
-                    data=message_data,
-                    source="job_search_scheduler"
-                ))
-                # Continue with next search
-                continue 
+        
+        # Create tasks for all job searches
+        search_tasks = [
+            self._search_jobs_and_send_write_message_event(job_search)
+            for job_search in self._active_searches.values()
+        ]
+        
+        # Run all searches concurrently
+        try:
+            await asyncio.gather(*search_tasks)
+        except Exception as e:
+            logger.error(f"Error during concurrent job searches: {e}")
+            # Individual search errors are handled in _search_jobs_and_send_write_message_event 
