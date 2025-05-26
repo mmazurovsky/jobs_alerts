@@ -4,14 +4,17 @@ Unit tests for LinkedIn job scraper.
 import unittest
 import asyncio
 import logging
+import sys
 from src.core.linkedin_scraper import LinkedInScraper
 from src.core.config import Config
 from src.data.data import StreamManager
 
-# Configure logging
+# Ensure logging is always visible during pytest runs, even if other modules configure logging first
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    stream=sys.stdout,
+    force=True  # Force reconfiguration so logs always show
 )
 logger = logging.getLogger(__name__)
 
@@ -32,7 +35,7 @@ class TestLinkedInScraper(unittest.TestCase):
     
     def setUp(self):
         """Set up test environment."""
-        self.scraper = LinkedInScraper(StreamManager())
+        self.scraper = LinkedInScraper(StreamManager(), name="TestLinkedInScraper")
         self.loop = asyncio.get_event_loop()
         # Initialize browser and log in
         self.loop.run_until_complete(self.scraper.initialize())

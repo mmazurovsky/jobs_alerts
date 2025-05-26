@@ -30,6 +30,7 @@ class JobSearchManager:
                 if search.user_id not in self.job_searches:
                     self.job_searches[search.user_id] = []
                 self.job_searches[search.user_id].append(search)
+                logger.info(f"Loaded job search from MongoDB: {search.to_log_string()}")
 
             # Send initial job searches to scheduler directly
             await self._job_search_scheduler.add_initial_job_searches(searches)
@@ -54,6 +55,7 @@ class JobSearchManager:
                 time_period=search_in.time_period,
                 user_id=search_in.user_id
             )
+            logger.info(f"Added new job search from user: {search.to_log_string()}")
             # Save to MongoDB first
             await self._mongo_manager.save_job_search(search)
             
@@ -93,7 +95,10 @@ class JobSearchManager:
     
     async def get_user_searches(self, user_id: int) -> List[JobSearchOut]:
         """Get all job searches for a user."""
-        return self.job_searches.get(user_id, [])
+        searches = await self._mongo_manager.get_user_searches(user_id)
+        for search in searches:
+            logger.info(f"Loaded job search from MongoDB: {search.to_log_string()}")
+        return searches
     
     async def get_active_job_searches(self) -> List[JobSearchOut]:
         """Get all job searches."""

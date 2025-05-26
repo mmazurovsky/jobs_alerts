@@ -6,7 +6,6 @@ from typing import Optional
 
 from src.bot.telegram_bot import TelegramBot
 from src.core.config import Config
-from src.core.linkedin_scraper import LinkedInScraper
 from src.data.mongo_manager import MongoManager
 from src.schedulers.job_search_scheduler import JobSearchScheduler
 from src.user.job_search_manager import JobSearchManager
@@ -22,7 +21,6 @@ class Container:
         self._config: Optional[Config] = None
         self._mongo_manager: Optional[MongoManager] = None
         self._job_search_manager: Optional[JobSearchManager] = None
-        self._scraper: Optional[LinkedInScraper] = None
         self._telegram_bot: Optional[TelegramBot] = None
         self._scheduler: Optional[JobSearchScheduler] = None
         self._stream_manager: Optional[StreamManager] = None
@@ -48,12 +46,6 @@ class Container:
             self._job_search_manager = JobSearchManager(mongo_manager=self.mongo_manager, job_search_scheduler=self.scheduler)
         return self._job_search_manager
     
-    @property
-    def scraper(self) -> LinkedInScraper:
-        """Get the LinkedIn scraper instance."""
-        if not self._scraper:
-            self._scraper = LinkedInScraper(StreamManager())
-        return self._scraper
     
     @property
     def telegram_bot(self) -> TelegramBot:
@@ -74,7 +66,6 @@ class Container:
         """Get the job search scheduler instance."""
         if not self._scheduler:
             self._scheduler = JobSearchScheduler(
-                scraper=self.scraper,
                 stream_manager=self.stream_manager
             )
         return self._scheduler
@@ -93,9 +84,6 @@ class Container:
             
             # Initialize job search manager
             await self.job_search_manager.initialize()
-            
-            # Initialize LinkedIn scraper
-            await self.scraper.initialize()
             
             # Initialize Telegram bot
             await self.telegram_bot.initialize()
@@ -121,9 +109,6 @@ class Container:
             if self._telegram_bot and hasattr(self._telegram_bot, 'application'):
                 await self._telegram_bot.stop()
             
-            # Shutdown LinkedIn scraper if it was initialized
-            if self._scraper and hasattr(self._scraper, 'browser'):
-                await self._scraper.close()
             
             # Close MongoDB connection last if it was initialized
             if self._mongo_manager and hasattr(self._mongo_manager, 'client'):
