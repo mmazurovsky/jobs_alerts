@@ -20,7 +20,7 @@ class TestLinkedInFiltering(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.loop = asyncio.get_event_loop()
-        cls.scraper = LinkedInScraper(StreamManager())
+        cls.scraper = LinkedInScraper(StreamManager(), name="TestLinkedInFiltering")
         cls.loop.run_until_complete(cls.scraper.initialize())
         cls.loop.run_until_complete(cls.scraper.login())
     

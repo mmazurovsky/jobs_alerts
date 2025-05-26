@@ -9,6 +9,7 @@ import sys
 from typing import Optional
 
 from src.core.container import get_container
+from src.core.linkedin_scraper import LinkedInScraper
 
 # Configure logging
 log_level = os.getenv('LOG_LEVEL', 'INFO')
@@ -41,6 +42,15 @@ async def main() -> None:
         # Get container and initialize services
         container = get_container()
         await container.initialize()
+
+        # Immediately try to login to LinkedIn
+        scraper = LinkedInScraper(container.stream_manager, name="main")
+        await scraper.initialize()
+        login_success = await scraper.login()
+        if login_success:
+            logger.info("Initial LinkedIn login succeeded.")
+        else:
+            logger.error("Initial LinkedIn login failed.")
         
         # Set up signal handlers
         signal.signal(signal.SIGINT, lambda s, f: asyncio.create_task(handle_shutdown(s, f)))

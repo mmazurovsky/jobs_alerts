@@ -33,10 +33,9 @@ class Config:
         logger.info(f"Looking for .env file at: {env_path}")
         
         if not env_path.exists():
-            logger.error(f"No .env file found at {env_path}")
+            logger.warning(f".env file not found at {env_path}, proceeding with environment variables only.")
         else:
             logger.info(f"Loading .env file from: {env_path}")
-            # Force reload the .env file from the specified path
             load_dotenv(env_path, override=True)
             
         # LinkedIn credentials

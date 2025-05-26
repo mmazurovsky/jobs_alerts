@@ -16,9 +16,8 @@ async def mongo_manager():
 
 @pytest_asyncio.fixture
 async def job_search_scheduler():
-    scraper = AsyncMock(spec=LinkedInScraper)
     stream_manager = MagicMock(spec=StreamManager)
-    scheduler = JobSearchScheduler(scraper, stream_manager)
+    scheduler = JobSearchScheduler(stream_manager)
     await scheduler.initialize()
     yield scheduler
     await scheduler.stop()

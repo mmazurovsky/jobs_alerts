@@ -56,7 +56,6 @@ class JobSearchScheduler:
             if search.id not in self._active_searches:
                 self._active_searches[search.id] = search
                 self._schedule_job_search(search)
-                logger.info(f"Added new job search: {search.id}")
             else:
                 logger.info(f"Job search already exists: {search.id}")
         except Exception as e:
@@ -98,7 +97,14 @@ class JobSearchScheduler:
         """Check a single job search for new listings."""
         try:
             # Create a new browser session for this job search
-            scraper = LinkedInScraper(self._stream_manager)
+            name = None
+            if getattr(job_search, 'job_title', None) and getattr(job_search, 'location', None):
+                name = f"{job_search.job_title} - {job_search.location}"
+            elif getattr(job_search, 'job_title', None):
+                name = job_search.job_title
+            elif getattr(job_search, 'location', None):
+                name = job_search.location
+            scraper = LinkedInScraper(self._stream_manager, name=name)
             await scraper.create_new_session()
             
             user_id = job_search.user_id

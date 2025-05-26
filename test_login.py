@@ -6,7 +6,7 @@ from src.data.data import StreamManager
 logging.basicConfig(level=logging.INFO)
 
 async def test_login():
-    scraper = LinkedInScraper(StreamManager())
+    scraper = LinkedInScraper(StreamManager(), name="test_login")
     await scraper.initialize()
     login_success = await scraper.login()
     
