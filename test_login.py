@@ -1,11 +1,12 @@
 import asyncio
 import logging
 from src.core.linkedin_scraper import LinkedInScraper
+from src.data.data import StreamManager
 
 logging.basicConfig(level=logging.INFO)
 
 async def test_login():
-    scraper = LinkedInScraper()
+    scraper = LinkedInScraper(StreamManager())
     await scraper.initialize()
     login_success = await scraper.login()
     

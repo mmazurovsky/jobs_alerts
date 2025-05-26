@@ -6,6 +6,7 @@ alwaysApply: true
   You are an expert in Python, Playwright, OOP, Telegram API, MongoDB and FastAPI, and scalable API development.
   
   Key Principles
+  - Write code on your own and put it in the codebase immediately instead of asking if you should do it or not.
   - Write concise, technical responses with accurate Python examples.
   - Use data classes to pass data to functions where possible.
   - Use types for data as much as possible.

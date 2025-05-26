@@ -11,20 +11,21 @@ from pathlib import Path
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext, ElementHandle
 
 from src.core.config import config
-from src.data.data import JobListing, TimePeriod
+from src.data.data import JobListing, StreamManager, TimePeriod, StreamType, StreamEvent
 
 logger = logging.getLogger(__name__)
 
 class LinkedInScraper:
     """LinkedIn job scraper using Playwright."""
     
-    def __init__(self):
+    def __init__(self, stream_manager: StreamManager):
         """Initialize the scraper."""
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
         self.playwright = None
         self.state_file = Path("linkedin_state.json")
+        self.stream_manager = stream_manager
 
     async def __aenter__(self):
         """Async context manager entry."""
@@ -142,12 +143,35 @@ class LinkedInScraper:
                         f.write(str(await self.context.cookies()))
                     logger.info("Saved LinkedIn session state")
                 return True
-                
+            
+            # --- SCREENSHOT ON LOGIN FAILURE (unexpected URL) ---
             logger.error("Login failed - redirected to unexpected URL")
+            try:
+                screenshots_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'screenshots')
+                os.makedirs(screenshots_dir, exist_ok=True)
+                from datetime import datetime
+                screenshot_path = os.path.join(screenshots_dir, f'login_failed_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png')
+                await self.page.screenshot(path=screenshot_path)
+                await self.post_log_to_stream_manager(
+                    message=f"Login failed - redirected to unexpected URL. Screenshot saved to {screenshot_path}",
+                    image_path=screenshot_path
+                )
+            except Exception as ss_e:
+                logger.error(f"Failed to save login failure screenshot: {ss_e}")
             return False
                 
         except Exception as e:
             logger.error(f"Login failed: {str(e)}")
+            # --- SCREENSHOT ON LOGIN EXCEPTION ---
+            try:
+                screenshots_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'screenshots')
+                os.makedirs(screenshots_dir, exist_ok=True)
+                from datetime import datetime
+                screenshot_path = os.path.join(screenshots_dir, f'login_exception_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png')
+                await self.page.screenshot(path=screenshot_path)
+                logger.error(f"Login exception screenshot saved to {screenshot_path}")
+            except Exception as ss_e:
+                logger.error(f"Failed to save login exception screenshot: {ss_e}")
             return False
             
     async def _navigate_to_jobs_page(self, time_period_seconds: Optional[int] = None):
@@ -804,4 +828,18 @@ class LinkedInScraper:
         self.context = None
         self.page = None
         self.playwright = None
+
+    async def post_log_to_stream_manager(self, *, message: str, image_path: Optional[str] = None):
+        if not self.stream_manager:
+            raise ValueError("stream_manager is not set on LinkedInScraper")
+        event_data = {
+            "message": message,
+            "image_path": image_path
+        }
+        event = StreamEvent(
+            type=StreamType.SEND_LOG,
+            data=event_data,
+            source="linkedin_scraper"
+        )
+        self.stream_manager.publish(event)
 
