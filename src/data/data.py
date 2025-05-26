@@ -256,6 +256,7 @@ class SentJobsTracker:
 class StreamType(Enum):
     """Types of events in the stream."""
     SEND_MESSAGE = "send_message"
+    SEND_LOG = "send_log"
 
 @dataclass
 class StreamEvent:
@@ -267,6 +268,7 @@ class StreamManager:
     def __init__(self):
         self.streams: Dict[StreamType, Subject] = {
             StreamType.SEND_MESSAGE: Subject(),
+            StreamType.SEND_LOG: Subject(),
         }
     
     def get_stream(self, stream_type: StreamType) -> Subject:

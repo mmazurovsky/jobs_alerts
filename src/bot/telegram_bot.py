@@ -23,7 +23,6 @@ from src.data.data import (
     JobSearchOut, JobListing, JobSearchIn, JobType, RemoteType, TimePeriod,
     StreamType, StreamEvent, StreamManager, JobSearchRemove
 )
-from src.data.mongo_manager import MongoManager
 from src.user.job_search_manager import JobSearchManager
 
 logger = logging.getLogger(__name__)
@@ -31,13 +30,17 @@ logger = logging.getLogger(__name__)
 # Conversation states
 TITLE, LOCATION, JOB_TYPES, REMOTE_TYPES, TIME_PERIOD, BLACKLIST, CONFIRM = range(7)
 
+try:
+    ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID"))
+except (TypeError, ValueError):
+    raise RuntimeError("ADMIN_USER_ID environment variable must be set and be an integer.")
+
 class TelegramBot:
     """Telegram bot for managing job searches."""
     
-    def __init__(self, token: str, mongo_manager: MongoManager, stream_manager: StreamManager, job_search_manager: JobSearchManager):
+    def __init__(self, token: str, stream_manager: StreamManager, job_search_manager: JobSearchManager):
         """Initialize the bot with token and MongoDB manager."""
         self.token = token
-        self.mongo_manager = mongo_manager
         self.stream_manager = stream_manager
         self.job_search_manager = job_search_manager
         self.application = Application.builder().token(token).build()
@@ -46,6 +49,9 @@ class TelegramBot:
         # Subscribe to send message stream
         self.stream_manager.get_stream(StreamType.SEND_MESSAGE).subscribe(
             lambda event: asyncio.create_task(self._handle_send_message(event))
+        )
+        self.stream_manager.get_stream(StreamType.SEND_LOG).subscribe(
+            lambda event: asyncio.create_task(self._handle_send_log(event))
         )
     
     def _setup_handlers(self):
@@ -458,14 +464,47 @@ class TelegramBot:
             f"🔗 {job.link}"
         )
 
+    async def _handle_send_log(self, event: StreamEvent) -> None:
+        try:
+            message = event.data.get("message")
+            image_path = event.data.get("image_path")
+            if not message:
+                logger.error("No message provided in log event data")
+                return
+            if image_path and os.path.exists(image_path):
+                with open(image_path, "rb") as img:
+                    await self.application.bot.send_photo(
+                        chat_id=ADMIN_USER_ID,
+                        photo=img,
+                        caption=message
+                    )
+            else:
+                await self.application.bot.send_message(
+                    chat_id=ADMIN_USER_ID,
+                    text=message
+                )
+        except Exception as e:
+            logger.error(f"Failed to send log to admin: {e}")
+
     async def _handle_send_message(self, event: StreamEvent):
         """Handle message sending requests from other components"""
         try:
             message_data = event.data
-            await self.application.bot.send_message(
-                chat_id=message_data["user_id"],
-                text=message_data["message"]
-            )
+            user_id = message_data.get("user_id")
+            message = message_data.get("message")
+            image_path = message_data.get("image_path")
+            if image_path and os.path.exists(image_path):
+                with open(image_path, "rb") as img:
+                    await self.application.bot.send_photo(
+                        chat_id=user_id,
+                        photo=img,
+                        caption=message
+                    )
+            else:
+                await self.application.bot.send_message(
+                    chat_id=user_id,
+                    text=message
+                )
         except Exception as e:
             logger.error(f"Error sending message: {e}")
 

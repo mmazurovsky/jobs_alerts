@@ -5,6 +5,7 @@ import unittest
 import asyncio
 import logging
 from src.core.linkedin_scraper import LinkedInScraper
+from src.data.data import StreamManager
 
 # Configure logging
 logging.basicConfig(
@@ -19,7 +20,7 @@ class TestLinkedInFiltering(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.loop = asyncio.get_event_loop()
-        cls.scraper = LinkedInScraper()
+        cls.scraper = LinkedInScraper(StreamManager())
         cls.loop.run_until_complete(cls.scraper.initialize())
         cls.loop.run_until_complete(cls.scraper.login())
     

@@ -52,7 +52,7 @@ class Container:
     def scraper(self) -> LinkedInScraper:
         """Get the LinkedIn scraper instance."""
         if not self._scraper:
-            self._scraper = LinkedInScraper()
+            self._scraper = LinkedInScraper(StreamManager())
         return self._scraper
     
     @property
@@ -64,7 +64,6 @@ class Container:
                 raise ValueError("TELEGRAM_BOT_TOKEN not set in configuration")
             self._telegram_bot = TelegramBot(
                 token=token,
-                mongo_manager=self.mongo_manager,
                 stream_manager=self.stream_manager,
                 job_search_manager=self.job_search_manager
             )

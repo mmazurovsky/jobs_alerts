@@ -17,9 +17,8 @@ logger = logging.getLogger(__name__)
 class JobSearchScheduler:
     """Scheduler for periodic job searches using APScheduler."""
     
-    def __init__(self, scraper: LinkedInScraper, stream_manager: StreamManager):
+    def __init__(self, stream_manager: StreamManager):
         """Initialize the scheduler."""
-        self._scraper = scraper
         self._stream_manager = stream_manager
         self._scheduler = AsyncIOScheduler()
         self._active_searches: Dict[str, JobSearchOut] = {}  # search_id -> JobSearch
@@ -99,7 +98,7 @@ class JobSearchScheduler:
         """Check a single job search for new listings."""
         try:
             # Create a new browser session for this job search
-            scraper = LinkedInScraper()
+            scraper = LinkedInScraper(self._stream_manager)
             await scraper.create_new_session()
             
             user_id = job_search.user_id

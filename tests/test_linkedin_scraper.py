@@ -6,6 +6,7 @@ import asyncio
 import logging
 from src.core.linkedin_scraper import LinkedInScraper
 from src.core.config import Config
+from src.data.data import StreamManager
 
 # Configure logging
 logging.basicConfig(
@@ -31,7 +32,7 @@ class TestLinkedInScraper(unittest.TestCase):
     
     def setUp(self):
         """Set up test environment."""
-        self.scraper = LinkedInScraper()
+        self.scraper = LinkedInScraper(StreamManager())
         self.loop = asyncio.get_event_loop()
         # Initialize browser and log in
         self.loop.run_until_complete(self.scraper.initialize())
