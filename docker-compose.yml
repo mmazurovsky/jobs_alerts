@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  jobs_alerts:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/home/scraper/app/logs
+      - ./screenshots:/home/scraper/app/screenshots
+      - ./state:/home/scraper/app/state
+    restart: unless-stopped 
