@@ -67,6 +67,7 @@ TimePeriod("15 minutes", 900, CronTrigger(minute='0,15,30,45'))
 TimePeriod("30 minutes", 1800, CronTrigger(minute='0,30'))
 TimePeriod("1 hour", 3600, CronTrigger(minute='0'))
 TimePeriod("4 hours", 14400, CronTrigger(hour='0,4,8,12,16,20', minute='0'))
+TimePeriod("24 hours", 43200, CronTrigger(hour='0', minute='0'))
 
 class JobType:
     _instances = {}
@@ -161,6 +162,14 @@ class JobListing:
     link: str
     job_type: str
     timestamp: str
+
+@dataclass
+class ShortJobListing:
+    title: str
+    company: str
+    location: str
+    link: str
+    created_ago: str
 
 class JobSearchRemove(CustomBaseModel):
     """Data for removing a job search from Telegram bot."""

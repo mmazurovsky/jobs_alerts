@@ -104,8 +104,7 @@ class JobSearchScheduler:
                 name = job_search.job_title
             elif getattr(job_search, 'location', None):
                 name = job_search.location
-            scraper = LinkedInScraper(self._stream_manager, name=name)
-            await scraper.create_new_session()
+            scraper = await LinkedInScraper.create_new_session(self._stream_manager, name=name)
             
             user_id = job_search.user_id
             # Set max_pages=1 for 5-minute time period, else use default

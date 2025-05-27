@@ -135,14 +135,17 @@ class TelegramBot:
             for search in searches:
                 job_types = ", ".join(t.label for t in search.job_types)
                 remote_types = ", ".join(t.label for t in search.remote_types)
+                blacklist_str = ", ".join(search.blacklist) if search.blacklist else None
                 message += (
                     f"Title: {search.job_title}\n"
                     f"Location: {search.location}\n"
                     f"Job Types: {job_types}\n"
                     f"Remote Types: {remote_types}\n"
                     f"Check Frequency: {search.time_period.display_name}\n"
-                    f"Created At: {search.created_at}\n\n"
                 )
+                if blacklist_str:
+                    message += f"Blacklist: {blacklist_str}\n"
+                message += f"Created At: {search.created_at}\n\n"
                 
             await update.message.reply_text(message)
             
@@ -316,19 +319,33 @@ class TelegramBot:
             return CONFIRM
             
         try:
+            # Prepare summary
+            job_title = context.user_data['title']
+            location = context.user_data['location']
+            job_types = context.user_data['job_types']
+            remote_types = context.user_data['remote_types']
+            time_period = context.user_data['time_period']
+            blacklist = context.user_data.get('blacklist', [])
+            summary = f"{job_title};{location};"
+            summary += ",".join(jt.label for jt in job_types) + ";" if job_types else ";"
+            summary += ",".join(rt.label for rt in remote_types) + ";" if remote_types else ";"
+            summary += f"{time_period.display_name}"
+            if blacklist:
+                summary += f";{','.join(blacklist)}"
+            await update.message.reply_text(f"Saving new job search: {summary}")
+
             # Create JobSearchIn instance and pass it directly
             job_search_in = JobSearchIn(
-                job_title=context.user_data['title'],
-                location=context.user_data['location'],
-                job_types=context.user_data['job_types'],
-                remote_types=context.user_data['remote_types'],
-                time_period=context.user_data['time_period'],
+                job_title=job_title,
+                location=location,
+                job_types=job_types,
+                remote_types=remote_types,
+                time_period=time_period,
                 user_id=update.effective_user.id,
-                blacklist=context.user_data.get('blacklist', [])
+                blacklist=blacklist
             )
 
             await self.job_search_manager.add_search(job_search_in)
-            
             await update.message.reply_text("Your job search has been created and will be processed shortly.")
             
         except Exception as e:

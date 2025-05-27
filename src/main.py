@@ -44,8 +44,7 @@ async def main() -> None:
         await container.initialize()
 
         # Immediately try to login to LinkedIn
-        scraper = LinkedInScraper(container.stream_manager, name="main")
-        await scraper.initialize()
+        scraper = await LinkedInScraper.create_new_session(container.stream_manager, name="main")
         login_success = await scraper.ensure_logged_in()
         if login_success:
             logger.info("Initial LinkedIn login succeeded.")

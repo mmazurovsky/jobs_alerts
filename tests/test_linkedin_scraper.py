@@ -35,10 +35,8 @@ class TestLinkedInScraper(unittest.TestCase):
     
     def setUp(self):
         """Set up test environment."""
-        self.scraper = LinkedInScraper(StreamManager(), name="TestLinkedInScraper")
         self.loop = asyncio.get_event_loop()
-        # Initialize browser and log in
-        self.loop.run_until_complete(self.scraper.initialize())
+        self.scraper = self.loop.run_until_complete(LinkedInScraper.create_new_session(StreamManager(), name="TestLinkedInScraper"))
         self.loop.run_until_complete(self.scraper.login())
     
     def tearDown(self):

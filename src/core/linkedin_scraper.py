@@ -5,6 +5,7 @@ import asyncio
 import logging
 import os
 import random
+import time
 from typing import List, Optional, Dict
 from datetime import datetime
 from pathlib import Path
@@ -32,6 +33,10 @@ logger.propagate = False
 class LinkedInScraper:
     """LinkedIn job scraper using Playwright."""
     
+    _session_lock = asyncio.Lock()
+    _last_session_time = 0.0
+    _session_queue = asyncio.Queue()
+    
     def __init__(self, stream_manager: StreamManager, name: Optional[str] = None):
         """Initialize the scraper."""
         self.browser: Optional[Browser] = None
@@ -48,14 +53,14 @@ class LinkedInScraper:
 
     async def __aenter__(self):
         """Async context manager entry."""
-        await self.initialize()
+        await self._initialize()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit."""
         await self.close()
         
-    async def initialize(self):
+    async def _initialize(self):
         """Initialize the browser and page."""
         try:
             self.playwright = await async_playwright().start()
@@ -127,9 +132,26 @@ class LinkedInScraper:
 
     def _handle_response_status(self, response):
         if response.status in [403, 429]:
-            
             self.logger.error(f"Received status {response.status} for {response.url}. Possible throttling or ban.")
-            self.post_log_to_stream_manager(f"Received status {response.status} for {response.url}. Possible throttling or ban.")
+            async def log_with_screenshot():
+                screenshots_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'screenshots')
+                os.makedirs(screenshots_dir, exist_ok=True)
+                from datetime import datetime
+                screenshot_path = os.path.join(
+                    screenshots_dir,
+                    f'status_{response.status}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png'
+                )
+                if self.page:
+                    await self.page.screenshot(path=screenshot_path)
+                    await self.post_log_to_stream_manager(
+                        message=f"Received status {response.status} for {response.url}. Possible throttling or ban.",
+                        image_path=screenshot_path
+                    )
+                else:
+                    await self.post_log_to_stream_manager(
+                        message=f"Received status {response.status} for {response.url}. Possible throttling or ban. (No page available for screenshot)"
+                    )
+            asyncio.create_task(log_with_screenshot())
 
     async def _simulate_human_actions(self):
         # Random mouse movement and scrolling
@@ -881,10 +903,25 @@ class LinkedInScraper:
             self.logger.error(f"Error during job search: {str(e)}")
             return all_jobs
 
-    async def create_new_session(self):
-        """Create a new browser session for a job search."""
-        await self.initialize()
-        return self
+    @classmethod
+    async def create_new_session(cls, *args, **kwargs):
+        """Create a new browser session for a job search, throttled to 1 per 10 seconds (global)."""
+        loop = asyncio.get_event_loop()
+        future = loop.create_future()
+        await cls._session_queue.put((args, kwargs, future))
+
+        async with cls._session_lock:
+            while not cls._session_queue.empty():
+                args, kwargs, next_future = await cls._session_queue.get()
+                now = time.monotonic()
+                wait_time = max(0, 10 - (now - cls._last_session_time))
+                if wait_time > 0:
+                    await asyncio.sleep(wait_time)
+                instance = cls(*args, **kwargs)
+                await instance._initialize()
+                cls._last_session_time = time.monotonic()
+                next_future.set_result(instance)
+        return await future
 
     async def close(self):
         """Close the browser and cleanup."""
