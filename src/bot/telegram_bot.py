@@ -21,7 +21,8 @@ from src.core.config import Config
 from src.core.linkedin_scraper import LinkedInScraper
 from src.data.data import (
     JobSearchOut, JobListing, JobSearchIn, JobType, RemoteType, TimePeriod,
-    StreamType, StreamEvent, StreamManager, JobSearchRemove
+    StreamType, StreamEvent, StreamManager, JobSearchRemove,
+    job_types_list, remote_types_list, time_periods_list
 )
 from src.user.job_search_manager import JobSearchManager
 
@@ -103,9 +104,18 @@ class TelegramBot:
         help_text = (
             "Available commands:\n"
             "/new - Create a new job search\n"
+            "/newRaw - Create a new job search with a single command (advanced)\n"
             "/list - List your job searches\n"
             "/delete - Delete a job search\n"
-            "/help - Show this help message"
+            "/help - Show this help message\n\n"
+            "*Advanced: /newRaw usage*\n"
+            "/newRaw <job_title>;<location>;<job_type>;<remote_type>;<time_period>[;<blacklist>]\n"
+            "Example: /newRaw Software Engineer;Germany;Full-time;Remote;5 minutes;intern,senior,lead\n\n"
+            "Available values:\n"
+            "- Job types: Full-time, Part-time, Contract, Temporary, Internship\n"
+            "- Remote types: On-site, Remote, Hybrid\n"
+            "- Time periods: 5 minutes, 10 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours\n"
+            "- Blacklist: Optional, comma-separated words/phrases to exclude from job titles"
         )
         await update.message.reply_text(help_text)
     
@@ -123,16 +133,19 @@ class TelegramBot:
                 
             message = "Your job searches:\n\n"
             for search in searches:
-                job_types = ", ".join(t.value for t in search.job_types)
-                remote_types = ", ".join(t.value for t in search.remote_types)
+                job_types = ", ".join(t.label for t in search.job_types)
+                remote_types = ", ".join(t.label for t in search.remote_types)
+                blacklist_str = ", ".join(search.blacklist) if search.blacklist else None
                 message += (
                     f"Title: {search.job_title}\n"
                     f"Location: {search.location}\n"
                     f"Job Types: {job_types}\n"
                     f"Remote Types: {remote_types}\n"
                     f"Check Frequency: {search.time_period.display_name}\n"
-                    f"Created At: {search.created_at}\n\n"
                 )
+                if blacklist_str:
+                    message += f"Blacklist: {blacklist_str}\n"
+                message += f"Created At: {search.created_at}\n\n"
                 
             await update.message.reply_text(message)
             
@@ -199,11 +212,9 @@ class TelegramBot:
         context.user_data['location'] = update.message.text
         
         # Show available job types and instructions
-        job_types_list = "\n".join(f"• {job_type.value}" for job_type in JobType)
         await update.message.reply_text(
             "Select job types (you can choose multiple).\n\n"
-            "Available job types:\n"
-            f"{job_types_list}\n\n"
+            f"Available job types:\n{job_types_list()}\n\n"
             "Enter job types separated by commas, e.g.:\n"
             "Full-time, Part-time, Contract"
         )
@@ -211,109 +222,69 @@ class TelegramBot:
     
     async def job_types(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Handle job types selection."""
-        # Parse job types from input
         input_text = update.message.text.strip()
         job_types = [t.strip() for t in input_text.split(',')]
-        
-        # Convert input to JobType enum by matching against values
         selected_types = []
-        for job_type in job_types:
-            for enum_type in JobType:
-                if job_type.lower() == enum_type.value.lower():
-                    selected_types.append(enum_type)
-                    break
-        
+        for t in job_types:
+            try:
+                selected_types.append(JobType.parse(t))
+            except ValueError:
+                pass
         context.user_data['job_types'] = selected_types
-        
         if not context.user_data['job_types']:
-            # Show available job types for reference
-            job_types_list = "\n".join(f"• {job_type.value}" for job_type in JobType)
             await update.message.reply_text(
                 "No valid job types selected. Please try again with valid job types.\n\n"
-                "Available job types:\n"
-                f"{job_types_list}\n\n"
-                "Enter job types separated by commas, e.g.:\n"
-                "Full-time, Part-time, Contract"
+                f"Available job types:\n{job_types_list()}\n\n"
+                "Enter job types separated by commas, e.g.:\nFull-time, Part-time, Contract"
             )
             return JOB_TYPES
-            
-        # Show available remote types and instructions
-        remote_types_list = "\n".join(f"• {remote_type.value}" for remote_type in RemoteType)
         await update.message.reply_text(
             "Select remote work types (you can choose multiple).\n\n"
-            "Available remote types:\n"
-            f"{remote_types_list}\n\n"
-            "Enter remote types separated by commas, e.g.:\n"
-            "Remote, Hybrid, On-site"
+            f"Available remote types:\n{remote_types_list()}\n\n"
+            "Enter remote types separated by commas, e.g.:\nRemote, Hybrid, On-site"
         )
         return REMOTE_TYPES
     
     async def remote_types(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Handle remote types selection."""
-        # Parse remote types from input
         input_text = update.message.text.strip()
         remote_types = [t.strip() for t in input_text.split(',')]
-        
-        # Convert input to RemoteType enum by matching against values
         selected_types = []
-        for remote_type in remote_types:
-            for enum_type in RemoteType:
-                if remote_type.lower() == enum_type.value.lower():
-                    selected_types.append(enum_type)
-                    break
-        
+        for t in remote_types:
+            try:
+                selected_types.append(RemoteType.parse(t))
+            except ValueError:
+                pass
         context.user_data['remote_types'] = selected_types
-        
         if not context.user_data['remote_types']:
-            # Show available remote types for reference
-            remote_types_list = "\n".join(f"• {remote_type.value}" for remote_type in RemoteType)
             await update.message.reply_text(
                 "No valid remote types selected. Please try again with valid remote types.\n\n"
-                "Available remote types:\n"
-                f"{remote_types_list}\n\n"
-                "Enter remote types separated by commas, e.g.:\n"
-                "Remote, Hybrid, On-site"
+                f"Available remote types:\n{remote_types_list()}\n\n"
+                "Enter remote types separated by commas, e.g.:\nRemote, Hybrid, On-site"
             )
             return REMOTE_TYPES
-            
-        # Show available time periods and instructions
-        time_periods_list = "\n".join(f"• {period.display_name}" for period in TimePeriod)
         await update.message.reply_text(
             "Select how often to check for new jobs.\n\n"
-            "Available time periods:\n"
-            f"{time_periods_list}\n\n"
-            "Enter one of the time periods above, e.g.:\n"
-            "Daily"
+            f"Available time periods:\n{time_periods_list()}\n\n"
+            "Enter one of the time periods above, e.g.:\n5 minutes"
         )
         return TIME_PERIOD
     
     async def time_period(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Handle time period selection."""
-        # Parse time period from input
         input_text = update.message.text.strip()
-        
-        # Convert input to TimePeriod enum by matching against display names
-        selected_period = None
-        for period in TimePeriod:
-            if input_text.lower() == period.display_name.lower():
-                selected_period = period
-                break
-        
+        try:
+            selected_period = TimePeriod.parse(input_text)
+        except ValueError:
+            selected_period = None
         if not selected_period:
-            # Show available time periods for reference
-            time_periods_list = "\n".join(f"• {period.display_name}" for period in TimePeriod)
             await update.message.reply_text(
                 "No valid time period selected. Please try again with a valid time period.\n\n"
-                "Available time periods:\n"
-                f"{time_periods_list}\n\n"
-                "Enter one of the time periods above, e.g.:\n"
-                "5 minutes"
+                f"Available time periods:\n{time_periods_list()}\n\n"
+                "Enter one of the time periods above, e.g.:\n5 minutes"
             )
             return TIME_PERIOD
-            
         context.user_data['time_period'] = selected_period
-        
-        # Prompt for blacklist
         await update.message.reply_text(
             "Optional: Enter a comma-separated list of words or phrases to blacklist from job titles.\n"
             "Any job whose title contains one of these (case-insensitive) will be excluded.\n"
@@ -348,19 +319,33 @@ class TelegramBot:
             return CONFIRM
             
         try:
+            # Prepare summary
+            job_title = context.user_data['title']
+            location = context.user_data['location']
+            job_types = context.user_data['job_types']
+            remote_types = context.user_data['remote_types']
+            time_period = context.user_data['time_period']
+            blacklist = context.user_data.get('blacklist', [])
+            summary = f"{job_title};{location};"
+            summary += ",".join(jt.label for jt in job_types) + ";" if job_types else ";"
+            summary += ",".join(rt.label for rt in remote_types) + ";" if remote_types else ";"
+            summary += f"{time_period.display_name}"
+            if blacklist:
+                summary += f";{','.join(blacklist)}"
+            await update.message.reply_text(f"Saving new job search: {summary}")
+
             # Create JobSearchIn instance and pass it directly
             job_search_in = JobSearchIn(
-                job_title=context.user_data['title'],
-                location=context.user_data['location'],
-                job_types=context.user_data['job_types'],
-                remote_types=context.user_data['remote_types'],
-                time_period=context.user_data['time_period'],
+                job_title=job_title,
+                location=location,
+                job_types=job_types,
+                remote_types=remote_types,
+                time_period=time_period,
                 user_id=update.effective_user.id,
-                blacklist=context.user_data.get('blacklist', [])
+                blacklist=blacklist
             )
 
             await self.job_search_manager.add_search(job_search_in)
-            
             await update.message.reply_text("Your job search has been created and will be processed shortly.")
             
         except Exception as e:
@@ -512,31 +497,26 @@ class TelegramBot:
         """Handle /newRaw command with raw input format.
         
         Format: /newRaw <job_title>;<location>;<job_type>;<remote_type>;<time_period>[;<blacklist>]
-        Example: /newRaw Software Engineer;Germany;FULL_TIME;REMOTE;MINUTES_5;intern,senior,lead
+        Example: /newRaw Software Engineer;Germany;Full-time;Remote;5 minutes;intern,senior,lead
         
         Available values:
-        - Job types: FULL_TIME, PART_TIME, CONTRACT, TEMPORARY, INTERNSHIP
-        - Remote types: ON_SITE, REMOTE, HYBRID
-        - Time periods: MINUTES_5, MINUTES_15, MINUTES_30, MINUTES_60, HOURS_4
+        - Job types: Full-time, Part-time, Contract, Temporary, Internship
+        - Remote types: On-site, Remote, Hybrid
+        - Time periods: 5 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours
         - Blacklist: Optional, comma-separated words/phrases to exclude from job titles
         """
         try:
-            # Get the raw input after the command
             raw_input = update.message.text.split('/newRaw ')[1].strip()
-            logger.info(f"Received newRaw command: {update.message.text}")
-            
-            # Split the input by semicolon
             parts = raw_input.split(';')
-            logger.info(f"Split raw data: {parts}")
             if len(parts) < 5 or len(parts) > 6:
                 await update.message.reply_text(
                     "Invalid format. Please use:\n"
                     "/newRaw <job_title>;<location>;<job_type>;<remote_type>;<time_period>[;<blacklist>]\n\n"
-                    "Example: /newRaw Software Engineer;Germany;FULL_TIME;REMOTE;MINUTES_5;intern,junior\n\n"
+                    "Example: /newRaw Software Engineer;Germany;Full-time;Remote;5 minutes;intern,junior\n\n"
                     "Available values:\n"
-                    "- Job types: FULL_TIME, PART_TIME, CONTRACT, TEMPORARY, INTERNSHIP\n"
-                    "- Remote types: ON_SITE, REMOTE, HYBRID\n"
-                    "- Time periods: MINUTES_5, MINUTES_15, MINUTES_30, MINUTES_60, HOURS_4\n"
+                    "- Job types: Full-time, Part-time, Contract, Temporary, Internship\n"
+                    "- Remote types: On-site, Remote, Hybrid\n"
+                    "- Time periods: 5 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours\n"
                     "- Blacklist: Optional, comma-separated words/phrases to exclude from job titles"
                 )
                 return
@@ -544,68 +524,44 @@ class TelegramBot:
             blacklist = []
             if len(parts) == 6:
                 blacklist = [s.strip() for s in parts[5].split(',') if s.strip()]
-            logger.info(f"Parsed fields: title='{title}', location='{location}', job_type='{job_type}', remote_types='{remote_types}', time_period='{time_period}', blacklist={blacklist}")
-            
-            # Parse job type
-            logger.info("Attempting to parse job type...")
             job_type_enum = JobType.parse(job_type.strip())
-            logger.info(f"Successfully parsed job type: {[job_type_enum]}")
-            
-            # Parse remote types
-            logger.info("Attempting to parse remote types...")
             remote_type_enum = RemoteType.parse(remote_types.strip())
-            logger.info(f"Successfully parsed remote types: {[remote_type_enum]}")
-            
-            # Parse time period
-            logger.info("Attempting to parse time period...")
             time_period_enum = TimePeriod.parse(time_period.strip())
-            logger.info(f"Successfully parsed time period: {time_period_enum}")
-            
-            # Create job search
-            logger.info("Creating JobSearchIn instance...")
             job_search_in = JobSearchIn(
                 job_title=title.strip(),
                 location=location.strip(),
-                job_types=[job_type_enum.name],  # Use enum name
-                remote_types=[remote_type_enum.name],  # Use enum name
-                time_period=time_period_enum.name,  # Use enum name
+                job_types=[job_type_enum],
+                remote_types=[remote_type_enum],
+                time_period=time_period_enum,
                 user_id=update.effective_user.id,
                 blacklist=blacklist
             )
-            
-            # Add the search
-            logger.info("Adding job search to manager...")
             search_id = await self.job_search_manager.add_search(job_search_in)
-            
-            # Send confirmation
             msg = (
                 f"✅ New job search created!\n\n"
                 f"Job: {title}\n"
                 f"Location: {location}\n"
-                f"Type: {job_type_enum.value}\n"
-                f"Remote: {remote_type_enum.value}\n"
+                f"Type: {job_type_enum.label}\n"
+                f"Remote: {remote_type_enum.label}\n"
                 f"Check every: {time_period_enum.display_name}\n"
             )
             if blacklist:
                 msg += f"Blacklist: {', '.join(blacklist)}\n"
             msg += f"\nSearch ID: {search_id}"
             await update.message.reply_text(msg)
-            
         except ValueError as e:
-            logger.error(f"Error parsing input: {str(e)}")
             await update.message.reply_text(
                 f"❌ Error: {str(e)}\n\n"
                 "Please use the correct format:\n"
                 "/newRaw <job_title>;<location>;<job_type>;<remote_type>;<time_period>[;<blacklist>]\n\n"
-                "Example: /newRaw Software Engineer;Germany;FULL_TIME;REMOTE;MINUTES_5;intern,senior,lead\n\n"
+                "Example: /newRaw Software Engineer;Germany;Full-time;Remote;5 minutes;intern,senior,lead\n\n"
                 "Available values:\n"
-                "- Job types: FULL_TIME, PART_TIME, CONTRACT, TEMPORARY, INTERNSHIP\n"
-                "- Remote types: ON_SITE, REMOTE, HYBRID\n"
-                "- Time periods: MINUTES_5, MINUTES_15, MINUTES_30, MINUTES_60, HOURS_4\n"
+                "- Job types: Full-time, Part-time, Contract, Temporary, Internship\n"
+                "- Remote types: On-site, Remote, Hybrid\n"
+                "- Time periods: 5 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours\n"
                 "- Blacklist: Optional, comma-separated words/phrases to exclude from job titles"
             )
         except Exception as e:
-            logger.error(f"Error creating raw job search: {str(e)}", exc_info=True)
             await update.message.reply_text(
                 f"❌ Error creating job search: {str(e)}\n\n"
                 "Please try again or contact support if the issue persists."
