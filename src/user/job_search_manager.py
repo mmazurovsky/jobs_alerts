@@ -53,7 +53,8 @@ class JobSearchManager:
                 job_types=search_in.job_types,
                 remote_types=search_in.remote_types,
                 time_period=search_in.time_period,
-                user_id=search_in.user_id
+                user_id=search_in.user_id,
+                blacklist=search_in.blacklist,
             )
             logger.info(f"Added new job search from user: {search.to_log_string()}")
             # Save to MongoDB first
