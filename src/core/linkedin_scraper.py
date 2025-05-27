@@ -38,7 +38,7 @@ class LinkedInScraper:
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
         self.playwright = None
-        self.state_file = Path("linkedin_state.json")
+        self.state_file = Path("/home/scraper/app/state/linkedin_state.json")
         self.stream_manager = stream_manager
         self.name = name
         self.logger = logging.LoggerAdapter(
@@ -103,6 +103,7 @@ class LinkedInScraper:
                 with open(self.state_file, "r") as f:
                     await self.context.add_cookies(eval(f.read()))
             else:
+                self.logger.warning("Didn't find existing LinkedIn state")
                 self.context = await self.browser.new_context(**context_options)
             
             # Create new page
@@ -184,45 +185,30 @@ class LinkedInScraper:
                     submit_button = await self.page.query_selector("button[type='submit']")
                     self.logger.info(f"username_input found: {username_input is not None}, password_input found: {password_input is not None}, submit_button found: {submit_button is not None}")
                     if not username_input:
-                        self.logger.error("Username input field not found on login page.")
-                        raise Exception("Username input field not found on login page.")
-                    if not password_input:
-                        self.logger.error("Password input field not found on login page.")
-                        raise Exception("Password input field not found on login page.")
-                    if not submit_button:
-                        self.logger.error("Submit button not found on login page.")
-                        raise Exception("Submit button not found on login page.")
-                    self.logger.info("Filling username and password fields...")
-                    await username_input.fill(config.linkedin_email)
-                    await password_input.fill(config.linkedin_password)
-                    self.logger.info("Clicking submit button...")
-                    await submit_button.click()
-                    self.logger.info("Waiting for login to complete...")
-                    await self._random_human_delay(5, 10)
-            else:
-                self.logger.info("No welcome heading found. Proceeding with regular login flow.")
-                # Regular login page
-                self.logger.info("On regular login page, filling credentials...")
-                username_input = await self.page.query_selector("#username")
-                password_input = await self.page.query_selector("#password")
-                submit_button = await self.page.query_selector("button[type='submit']")
-                self.logger.info(f"username_input found: {username_input is not None}, password_input found: {password_input is not None}, submit_button found: {submit_button is not None}")
-                if not username_input:
-                    self.logger.error("Username input field not found on login page.")
-                    raise Exception("Username input field not found on login page.")
-                if not password_input:
-                    self.logger.error("Password input field not found on login page.")
-                    raise Exception("Password input field not found on login page.")
-                if not submit_button:
-                    self.logger.error("Submit button not found on login page.")
-                    raise Exception("Submit button not found on login page.")
-                self.logger.info("Filling username and password fields...")
-                await username_input.fill(config.linkedin_email)
-                await password_input.fill(config.linkedin_password)
-                self.logger.info("Clicking submit button...")
-                await submit_button.click()
-                self.logger.info("Waiting for login to complete...")
-                await self._random_human_delay(5, 10)
+                        if password_input and submit_button:
+                            self.logger.warning("Username input not found, but password and submit button found. Attempting to fill password and submit.")
+                            await password_input.fill(config.linkedin_password)
+                            self.logger.info("Clicking submit button...")
+                            await submit_button.click()
+                            self.logger.info("Waiting for login to complete...")
+                            await self._random_human_delay(5, 10)
+                        else:
+                            self.logger.error("Username input field not found on login page, and cannot proceed without password or submit button.")
+                            raise Exception("Username input field not found on login page, and cannot proceed without password or submit button.")
+                    else:
+                        if not password_input:
+                            self.logger.error("Password input field not found on login page.")
+                            raise Exception("Password input field not found on login page.")
+                        if not submit_button:
+                            self.logger.error("Submit button not found on login page.")
+                            raise Exception("Submit button not found on login page.")
+                        self.logger.info("Filling username and password fields...")
+                        await username_input.fill(config.linkedin_email)
+                        await password_input.fill(config.linkedin_password)
+                        self.logger.info("Clicking submit button...")
+                        await submit_button.click()
+                        self.logger.info("Waiting for login to complete...")
+                        await self._random_human_delay(5, 10)
 
             # Check if we're on the feed page or any other LinkedIn page
             if "linkedin.com" in self.page.url and "login" not in self.page.url:
@@ -693,8 +679,7 @@ class LinkedInScraper:
             # For job types
             if job_types:
                 for job_type in job_types:
-                    # Accept both JobType class and string
-                    jt_label = job_type.label if hasattr(job_type, 'label') else str(job_type)
+                    jt_label = str(job_type)
                     code = job_type_map.get(jt_label)
                     if not code:
                         self.logger.warning(f"No code mapping for job type: {jt_label}")
@@ -718,7 +703,7 @@ class LinkedInScraper:
             # For remote types
             if remote_types:
                 for remote_type in remote_types:
-                    rt_label = remote_type.label if hasattr(remote_type, 'label') else str(remote_type)
+                    rt_label = str(remote_type)
                     code = remote_type_map.get(rt_label)
                     if not code:
                         self.logger.warning(f"No code mapping for remote type: {rt_label}")
@@ -850,31 +835,30 @@ class LinkedInScraper:
                         if blacklist and any(b.lower() in job_details.title.lower() for b in blacklist):
                             self.logger.info(f"Filtered out job '{job_details.title}' due to blacklist match.")
                             continue
-                        # Keyword filter: must be in title or description
-                        keyword_lower = keywords.lower()
-                        if keyword_lower not in job_details.title.lower() and keyword_lower not in job_details.description.lower():
-                            self.logger.info(f"Filtered out job '{job_details.title}' because keyword '{keywords}' not in title or description.")
+                        # Keyword filter: must match any word in title or description
+                        keyword_words = [w for w in keywords.lower().split() if w]
+                        title_lower = job_details.title.lower()
+                        description_lower = job_details.description.lower()
+                        if not any(word in title_lower or word in description_lower for word in keyword_words):
+                            self.logger.info(f"Filtered out job '{job_details.title}' because none of the keywords '{keywords}' are in title or description.")
                             continue
-                        # Job type and remote type filter
+                        # Job type and remote type filter (robust substring match)
                         job_type_str = job_details.job_type.lower() if job_details.job_type else ""
-                        job_type_match = False
-                        remote_type_match = False
-                        if job_types:
-                            for jt in job_types:
-                                jt_str = jt.value.lower() if hasattr(jt, 'value') else str(jt).lower()
-                                if jt_str in job_type_str:
-                                    job_type_match = True
-                                    break
+                        if job_type_str == "":
+                            job_type_match = True
+                            remote_type_match = True
                         else:
-                            job_type_match = True  # No filter if not provided
-                        if remote_types:
-                            for rt in remote_types:
-                                rt_str = rt.value.lower() if hasattr(rt, 'value') else str(rt).lower()
-                                if rt_str in job_type_str:
-                                    remote_type_match = True
-                                    break
-                        else:
-                            remote_type_match = True  # No filter if not provided
+                            if job_types and len(job_types) > 0:
+                                job_type_match = any(jt.label.lower() in job_type_str for jt in job_types)
+                            else:
+                                job_type_match = True  # No filter if not provided
+
+                            # RemoteType match
+                            if remote_types and len(remote_types) > 0:
+                                remote_type_match = any(rt.label.lower() in job_type_str for rt in remote_types)
+                            else:
+                                remote_type_match = True  # No filter if not provided
+
                         if not (job_type_match and remote_type_match):
                             self.logger.info(f"Filtered out job '{job_details.title}' because job_type '{job_details.job_type}' does not match job_types or remote_types filter.")
                             continue
@@ -926,4 +910,23 @@ class LinkedInScraper:
             source="linkedin_scraper"
         )
         self.stream_manager.publish(event)
+
+    async def ensure_logged_in(self) -> bool:
+        """Ensure the scraper is logged in, using session state if available."""
+        # 1. Check for session state file
+        if self.state_file.exists():
+            self.logger.info(f"Found session state file at {self.state_file}, attempting to use it.")
+            await self.page.goto("https://www.linkedin.com/feed/", timeout=30000)
+            await asyncio.sleep(1)
+            # Check if we are on the feed (not redirected to login)
+            if "login" not in self.page.url:
+                self.logger.info("Session state is valid, already logged in to LinkedIn.")
+                return True
+            else:
+                self.logger.info("Session state file exists but not valid, will try to login.")
+        else:
+            self.logger.info("No session state file found, will try to login.")
+        # 2. Try to login
+        login_success = await self.login()
+        return login_success
 
