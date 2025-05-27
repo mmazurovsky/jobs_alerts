@@ -46,10 +46,14 @@ class TimePeriod:
 
     @classmethod
     def parse(cls, value: str, *args, **kwargs):
-        instance = cls._instances.get(value.strip().lower())
-        if not instance:
-            raise ValueError(f"Invalid time period: {value}, {args}, {kwargs}")
-        return instance
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, str):
+            instance = cls._instances.get(value.strip().lower())
+            if not instance:
+                raise ValueError(f"Invalid time period: {value}, {args}, {kwargs}")
+            return instance
+        raise ValueError(f"TimePeriod.parse expects a string or TimePeriod instance, got {type(value)}")
 
     def __eq__(self, other):
         return isinstance(other, TimePeriod) and self.display_name == other.display_name
@@ -77,10 +81,14 @@ class JobType:
 
     @classmethod
     def parse(cls, value: str, *args, **kwargs):
-        instance = cls._instances.get(value.strip().lower())
-        if not instance:
-            raise ValueError(f"Invalid job type: {value}, {args}, {kwargs}")
-        return instance
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, str):
+            instance = cls._instances.get(value.strip().lower())
+            if not instance:
+                raise ValueError(f"Invalid job type: {value}, {args}, {kwargs}")
+            return instance
+        raise ValueError(f"JobType.parse expects a string or JobType instance, got {type(value)}")
 
     def __eq__(self, other):
         return isinstance(other, JobType) and self.label == other.label
@@ -108,10 +116,14 @@ class RemoteType:
 
     @classmethod
     def parse(cls, value: str, *args, **kwargs):
-        instance = cls._instances.get(value.strip().lower())
-        if not instance:
-            raise ValueError(f"Invalid remote type: {value}, {args}, {kwargs}")
-        return instance
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, str):
+            instance = cls._instances.get(value.strip().lower())
+            if not instance:
+                raise ValueError(f"Invalid remote type: {value}, {args}, {kwargs}")
+            return instance
+        raise ValueError(f"RemoteType.parse expects a string or RemoteType instance, got {type(value)}")
 
     def __eq__(self, other):
         return isinstance(other, RemoteType) and self.label == other.label

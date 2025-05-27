@@ -104,9 +104,18 @@ class TelegramBot:
         help_text = (
             "Available commands:\n"
             "/new - Create a new job search\n"
+            "/newRaw - Create a new job search with a single command (advanced)\n"
             "/list - List your job searches\n"
             "/delete - Delete a job search\n"
-            "/help - Show this help message"
+            "/help - Show this help message\n\n"
+            "*Advanced: /newRaw usage*\n"
+            "/newRaw <job_title>;<location>;<job_type>;<remote_type>;<time_period>[;<blacklist>]\n"
+            "Example: /newRaw Software Engineer;Germany;Full-time;Remote;5 minutes;intern,senior,lead\n\n"
+            "Available values:\n"
+            "- Job types: Full-time, Part-time, Contract, Temporary, Internship\n"
+            "- Remote types: On-site, Remote, Hybrid\n"
+            "- Time periods: 5 minutes, 10 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours\n"
+            "- Blacklist: Optional, comma-separated words/phrases to exclude from job titles"
         )
         await update.message.reply_text(help_text)
     
@@ -124,8 +133,8 @@ class TelegramBot:
                 
             message = "Your job searches:\n\n"
             for search in searches:
-                job_types = ", ".join(t.value for t in search.job_types)
-                remote_types = ", ".join(t.value for t in search.remote_types)
+                job_types = ", ".join(t.label for t in search.job_types)
+                remote_types = ", ".join(t.label for t in search.remote_types)
                 message += (
                     f"Title: {search.job_title}\n"
                     f"Location: {search.location}\n"

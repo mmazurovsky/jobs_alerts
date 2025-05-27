@@ -10,4 +10,5 @@ services:
     volumes:
       - ./logs:/home/scraper/app/logs
       - ./screenshots:/home/scraper/app/screenshots
+      - ./state:/home/scraper/app/state
     restart: unless-stopped 
