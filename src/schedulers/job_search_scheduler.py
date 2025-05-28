@@ -5,12 +5,14 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Set
+import os
+import random
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from src.data.data import JobSearchOut, StreamManager, TimePeriod, JobListing, SentJobsTracker, StreamType, StreamEvent
-from src.core.linkedin_scraper import LinkedInScraper
+from src.core.linkedin_scraper_guest import LinkedInScraperGuest
 
 logger = logging.getLogger(__name__)
 
@@ -83,13 +85,16 @@ class JobSearchScheduler:
         """Schedule a job search to run periodically."""
         job_id = f"job_search_{search.id}"
         trigger = search.time_period.get_cron_trigger()
-        
+
+        async def job_wrapper():
+            await self._search_jobs_and_send_write_message_event(search)
+
         self._scheduler.add_job(
-            self._search_jobs_and_send_write_message_event,
+            job_wrapper,
             trigger=trigger,
-            args=[search],
             id=job_id,
-            replace_existing=True
+            replace_existing=True,
+            coalesce=True,
         )
         logger.info(f"Scheduled job search {search.id} with trigger {trigger}")
     
@@ -104,18 +109,21 @@ class JobSearchScheduler:
                 name = job_search.job_title
             elif getattr(job_search, 'location', None):
                 name = job_search.location
-            scraper = await LinkedInScraper.create_new_session(self._stream_manager, name=name)
+            
+            scraper = await LinkedInScraperGuest.create_new_session(
+                name=name, 
+                stream_manager=self._stream_manager,
+            )
             
             user_id = job_search.user_id
-            # Set max_pages=1 for 5-minute time period, else use default
-            max_pages = 1 if getattr(job_search.time_period, 'seconds', None) == 300 else 2
+            max_jobs = 100
             jobs = await scraper.search_jobs(
                 keywords=job_search.job_title,
                 location=job_search.location,
                 job_types=job_search.job_types,
                 remote_types=job_search.remote_types,
                 time_period=job_search.time_period,
-                max_pages=max_pages,
+                max_jobs=max_jobs,
                 blacklist=job_search.blacklist,
             )
             
@@ -136,7 +144,7 @@ class JobSearchScheduler:
                             f"🏢 {job.company}\n"
                             f"💼 {job.title}\n"
                             f"📍 {job.location}\n"
-                            f"💼 {job.job_type}\n"
+                            f"⏰ {job.created_ago}\n"
                             f"🔗 {job.link}\n\n"
                         )
                     

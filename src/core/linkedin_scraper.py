@@ -115,7 +115,7 @@ class LinkedInScraper:
             self.page = await self.context.new_page()
             self.page.set_default_timeout(30000)  # 30 seconds timeout
             self.page.set_default_navigation_timeout(30000)  # 30 seconds for navigation
-            
+
             # Monitor responses for 403/429
             self.page.on("response", self._handle_response_status)
 
@@ -174,11 +174,11 @@ class LinkedInScraper:
             if not self.page:
                 self.logger.error("Browser not initialized")
                 return False
-
+                
             self.logger.info("Attempting LinkedIn login...")
             await self.page.goto("https://www.linkedin.com/login")
             await self._random_human_delay()
-
+            
             if ("feed" in self.page.url):
                 self.logger.info("Already logged in to LinkedIn")
                 return True
@@ -198,9 +198,9 @@ class LinkedInScraper:
                     else:
                         self.logger.error("Could not find member profile button on 'Welcome back' page")
                         raise Exception("Could not find member profile button on 'Welcome back' page")
-                else:
+            else:
                     self.logger.info("Heading found but does not indicate 'Welcome back'. Proceeding with regular login flow.")
-                    # Regular login page
+                # Regular login page
                     self.logger.info("On regular login page, filling credentials...")
                     username_input = await self.page.query_selector("#username")
                     password_input = await self.page.query_selector("#password")
@@ -231,7 +231,7 @@ class LinkedInScraper:
                         await submit_button.click()
                         self.logger.info("Waiting for login to complete...")
                         await self._random_human_delay(5, 10)
-
+            
             # Check if we're on the feed page or any other LinkedIn page
             if "linkedin.com" in self.page.url and "login" not in self.page.url:
                 self.logger.info("Successfully logged in to LinkedIn")
@@ -256,7 +256,7 @@ class LinkedInScraper:
                         url=current_url,
                         post_to_stream_manager=True
                     )
-
+                
         except Exception as e:
             self.logger.error(f"Login failed: {str(e)}")
             current_url = self.page.url if self.page else None
