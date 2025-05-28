@@ -7,16 +7,20 @@ import os
 import signal
 import sys
 from typing import Optional
+from pathlib import Path
+
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
 
 from src.core.container import get_container
 from src.core.linkedin_scraper import LinkedInScraper
+from src.utils.logging_config import setup_logging
 
-# Configure logging
+# Configure logging to file and console
+setup_logging(log_file=Path('logs/app.log'))
 log_level = os.getenv('LOG_LEVEL', 'INFO')
-logging.basicConfig(
-    level=log_level,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-)
+logging.getLogger().setLevel(log_level)
 
 # Disable DEBUG logs from other libraries unless explicitly requested
 if log_level != 'DEBUG':
@@ -43,13 +47,13 @@ async def main() -> None:
         container = get_container()
         await container.initialize()
 
-        # Immediately try to login to LinkedIn
-        scraper = await LinkedInScraper.create_new_session(container.stream_manager, name="main")
-        login_success = await scraper.ensure_logged_in()
-        if login_success:
-            logger.info("Initial LinkedIn login succeeded.")
-        else:
-            logger.error("Initial LinkedIn login failed.")
+        # # Immediately try to login to LinkedIn
+        # scraper = await LinkedInScraper.create_new_session(container.stream_manager, name="main")
+        # login_success = await scraper.ensure_logged_in()
+        # if login_success:
+        #     logger.info("Initial LinkedIn login succeeded.")
+        # else:
+        #     logger.error("Initial LinkedIn login failed.")
         
         # Set up signal handlers
         signal.signal(signal.SIGINT, lambda s, f: asyncio.create_task(handle_shutdown(s, f)))

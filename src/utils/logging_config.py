@@ -39,5 +39,6 @@ def setup_logging(log_file: Path = None):
     # Configure root logger
     logging.basicConfig(
         level=logging.INFO,
-        handlers=handlers
+        handlers=handlers,
+        force=True
     ) 
