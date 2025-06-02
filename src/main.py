@@ -47,13 +47,14 @@ async def main() -> None:
         container = get_container()
         await container.initialize()
 
-        # # Immediately try to login to LinkedIn
-        # scraper = await LinkedInScraper.create_new_session(container.stream_manager, name="main")
-        # login_success = await scraper.ensure_logged_in()
-        # if login_success:
-        #     logger.info("Initial LinkedIn login succeeded.")
-        # else:
-        #     logger.error("Initial LinkedIn login failed.")
+        # Proxy connection check
+        from src.core.linkedin_scraper_guest import LinkedInScraperGuest
+        test_scraper = LinkedInScraperGuest(name="proxy_test", stream_manager=container.stream_manager)
+        proxy_ok = await test_scraper.check_proxy_connection()
+        if not proxy_ok:
+            logger.error("Proxy connection test failed. Check your proxy settings.")
+        else:
+            logger.info("Proxy connection test succeeded.")
         
         # Set up signal handlers
         signal.signal(signal.SIGINT, lambda s, f: asyncio.create_task(handle_shutdown(s, f)))

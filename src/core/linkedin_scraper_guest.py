@@ -7,6 +7,7 @@ from playwright.async_api import async_playwright, Page, Browser, BrowserContext
 from src.data.data import JobType, RemoteType, TimePeriod, ShortJobListing, StreamEvent, StreamType
 import time
 import random
+from urllib.parse import urlparse, urlunparse
 
 class LinkedInScraperGuest:
     """LinkedIn job scraper for public/guest access (no login)."""
@@ -687,6 +688,11 @@ class LinkedInScraperGuest:
             await self.page.keyboard.press('Escape')
             await self._random_delay(0.5, 1.5)
 
+    @staticmethod
+    def _strip_query(url: str) -> str:
+        parsed = urlparse(url)
+        return urlunparse(parsed._replace(query="", fragment=""))
+
     async def _extract_job_details(self, card, idx: int = 0) -> Optional[ShortJobListing]:
         # Extract job details from a job card element
         try:
@@ -694,6 +700,7 @@ class LinkedInScraperGuest:
             title_el = await card.query_selector('a.base-card__full-link')
             title = await title_el.inner_text() if title_el else ''
             job_url = await title_el.get_attribute('href') if title_el else ''
+            job_url = self._strip_query(job_url)
             company_el = await card.query_selector('h4.base-search-card__subtitle a, h4.base-search-card__subtitle')
             company = await company_el.inner_text() if company_el else ''
             location_el = await card.query_selector('span.job-search-card__location')
@@ -844,4 +851,19 @@ class LinkedInScraperGuest:
             )
             self.stream_manager.publish(event)
         except Exception as e:
-            self.logger.error(f"Failed to post watchdog screenshot: {e}") 
+            self.logger.error(f"Failed to post watchdog screenshot: {e}")
+
+    async def check_proxy_connection(self):
+        try:
+            await self._initialize()
+            test_url = "https://www.linkedin.com/"
+            self.logger.info(f"Testing proxy connection by navigating to {test_url}")
+            await self.page.goto(test_url, timeout=20000)
+            self.logger.info("Proxy connection test succeeded.")
+            await self.close()
+            return True
+        except Exception as e:
+            self.logger.error(f"Proxy connection test failed: {e}")
+            await self._post_watchdog_screenshot(f"Proxy connection test failed: {e}")
+            await self.close()
+            return False 
