@@ -77,10 +77,12 @@ class LinkedInScraperGuest:
         proxy_server = os.getenv('PROXY_SERVER')
         proxy_username = os.getenv('PROXY_USERNAME')
         proxy_password = os.getenv('PROXY_PASSWORD')
+        proxy_ports_str = os.getenv("PROXY_PORTS", "")
+        proxy_ports = [int(port.strip()) for port in proxy_ports_str.split(",") if port.strip()]
         
         if proxy_server:
             # Randomly select port from 10001-10010
-            random_port = random.randint(10001, 10010)
+            random_port = random.choice(proxy_ports)
             
             # Parse the proxy server URL to replace the port
             if '://' in proxy_server:
@@ -141,6 +143,18 @@ class LinkedInScraperGuest:
             await self.page.keyboard.type(char)
             # Variable typing speed
             await asyncio.sleep(random.uniform(0.05, 0.15))
+
+    async def _block_resource_types(self):
+        if not self.page:
+            return
+        async def route_intercept(route, request):
+            if request.resource_type in ["image", "media", "font", "stylesheet"]:
+                await route.abort()
+            elif any(domain in request.url for domain in ["doubleclick.net", "google-analytics.com", "ads.linkedin.com"]):
+                await route.abort()
+            else:
+                await route.continue_()
+        await self.page.route("**/*", route_intercept)
 
     async def _initialize(self):
         try:
@@ -347,7 +361,7 @@ class LinkedInScraperGuest:
                 self.logger.info("Creating new page...")
                 self.page = await self.context.new_page()
                 self.logger.info("Page created successfully")
-                
+                await self._block_resource_types()
                 # Test navigation to verify everything works
                 self.logger.info("Testing navigation to about:blank...")
                 await self.page.goto('about:blank', timeout=10000)
@@ -458,42 +472,36 @@ class LinkedInScraperGuest:
             except Exception as nav_error:
                 self.logger.error(f"Navigation failed: {nav_error}")
                 self.logger.info(f"Current URL after failed navigation: {self.page.url}")
-                
-                # If we're still on about:blank, the navigation completely failed
+                await self._post_watchdog_screenshot(f"Navigation failed: {nav_error}")
                 if self.page.url == 'about:blank':
                     self.logger.error("Browser stuck on about:blank - navigation completely failed")
                     return []
-                
-                # If we're on a different URL, continue but log it
                 if 'linkedin.com' not in self.page.url:
                     self.logger.error(f"Navigation ended up on unexpected URL: {self.page.url}")
                     return []
             
-            # Random delay after page load
             await self._random_delay(2, 4)
-            
-            # Check current URL again after delay
             current_url_after_delay = self.page.url
             self.logger.info(f"URL after delay: {current_url_after_delay}")
-            
-            # Simulate human-like mouse movement
             await self._human_like_mouse_movement()
-            
             await self._close_sign_in_modal()
             await self._reject_cookies()
 
-            # Check for no results after loading the page
+            # Check for no results after loading the page, before applying filters
+            self.logger.info("Checking for no-results section before applying filters...")
             no_results_section = await self.page.query_selector('section.no-results')
             if no_results_section:
-                self.logger.info("No jobs found - detected 'no-results' section")
+                self.logger.info("No jobs found - detected 'no-results' section before filters. Skipping filter application.")
                 return []
 
             # Select job type filter if needed
             if job_types:
+                self.logger.info(f"Applying job type filters: {[jt.label for jt in job_types]}")
                 await self._random_delay(1, 3)
                 await self._apply_job_type_filter(job_types)
             # Select remote type filter if needed
             if remote_types:
+                self.logger.info(f"Applying remote type filters: {[rt.label for rt in remote_types]}")
                 await self._random_delay(1, 3)
                 await self._apply_remote_type_filter(remote_types)
 
@@ -511,6 +519,7 @@ class LinkedInScraperGuest:
                     return []
 
             # Check for no results again after applying filters
+            self.logger.info("Checking for no-results section after applying filters...")
             no_results_section = await self.page.query_selector('section.no-results')
             if no_results_section:
                 self.logger.info("No jobs found after applying filters - detected 'no-results' section")
@@ -518,13 +527,19 @@ class LinkedInScraperGuest:
 
             # Wait for jobs container to load
             self.logger.info("Waiting for .jobs-search__results-list container after filters...")
-            await self.page.wait_for_selector('.jobs-search__results-list', timeout=30000)
+            try:
+                await self.page.wait_for_selector('.jobs-search__results-list', timeout=60000)
+            except Exception as wait_error:
+                self.logger.error(f"Timeout or error waiting for .jobs-search__results-list: {wait_error}")
+                html = await self.page.content()
+                self.logger.error(f"Page HTML (first 2000 chars): {html[:2000]}")
+                await self._post_watchdog_screenshot(f"Timeout or error waiting for .jobs-search__results-list: {wait_error}")
+                return []
             container = await self.page.query_selector('.jobs-search__results-list')
             if container:
                 self.logger.info(".jobs-search__results-list container found.")
                 self.logger.info("Delaying before waiting for job cards...")
                 await self._random_delay(2, 4)
-                # Scroll job results to load more jobs before waiting for job cards
                 await self._scroll_job_results()
             else:
                 self.logger.warning(".jobs-search__results-list container NOT found!")
@@ -537,7 +552,6 @@ class LinkedInScraperGuest:
             for idx, card in enumerate(job_cards[:limit]):
                 job = await self._extract_job_details(card, idx)
                 if job:
-                    # Blacklist filter
                     if blacklist and any(b.lower() in job.title.lower() for b in blacklist):
                         self.logger.info(f"Filtered out job '{job.title}' due to blacklist match.")
                         continue
