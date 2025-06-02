@@ -5,7 +5,7 @@ import logging
 from typing import Dict, List, Optional
 import uuid
 from src.data.data import JobSearchOut, JobSearchIn, JobSearchRemove, JobType, RemoteType, StreamManager, TimePeriod, StreamType, StreamEvent
-from src.data.mongo_manager import MongoManager
+from src.core.stores.job_search_store import JobSearchStore
 import asyncio
 
 from src.schedulers.job_search_scheduler import JobSearchScheduler
@@ -15,17 +15,17 @@ logger = logging.getLogger(__name__)
 class JobSearchManager:
     """Manager for job searches."""
     
-    def __init__(self, mongo_manager: MongoManager, job_search_scheduler: JobSearchScheduler):
+    def __init__(self, job_search_store: JobSearchStore, job_search_scheduler: JobSearchScheduler):
         """Initialize job search manager."""
         self.job_searches: Dict[int, List[JobSearchOut]] = {}
-        self._mongo_manager = mongo_manager
+        self._job_search_store = job_search_store
         self._job_search_scheduler = job_search_scheduler
         
     
     async def initialize(self) -> None:
         """Initialize job searches from MongoDB."""
         try:
-            searches = await self._mongo_manager.get_all_searches()
+            searches = await self._job_search_store.get_all_searches()
             for search in searches:
                 if search.user_id not in self.job_searches:
                     self.job_searches[search.user_id] = []
@@ -58,7 +58,7 @@ class JobSearchManager:
             )
             logger.info(f"Added new job search from user: {search.to_log_string()}")
             # Save to MongoDB first
-            await self._mongo_manager.save_job_search(search)
+            await self._job_search_store.save_job_search(search)
             
             # Update in-memory cache
             if search.user_id not in self.job_searches:
@@ -77,7 +77,7 @@ class JobSearchManager:
         """Delete a job search."""
         try:
             # Delete from MongoDB first
-            if not await self._mongo_manager.delete_search(job_search_remove.search_id):
+            if not await self._job_search_store.delete_search(job_search_remove.search_id):
                 return False
             
             # Delete from in-memory cache
@@ -96,7 +96,7 @@ class JobSearchManager:
     
     async def get_user_searches(self, user_id: int) -> List[JobSearchOut]:
         """Get all job searches for a user."""
-        searches = await self._mongo_manager.get_user_searches(user_id)
+        searches = await self._job_search_store.get_user_searches(user_id)
         for search in searches:
             logger.info(f"Loaded job search from MongoDB: {search.to_log_string()}")
         return searches

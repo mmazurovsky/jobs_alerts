@@ -452,35 +452,40 @@ class LinkedInScraperGuest:
         blacklist: Optional[List[str]] = None,
     ) -> List[ShortJobListing]:
         self._watchdog_task = asyncio.create_task(self._watchdog())
-        try:
-            # Build URL
-            base_url = "https://www.linkedin.com/jobs/search"
-            params = [
-                f"keywords={keywords.replace(' ', '%20')}"
-            ]
-            if location:
-                params.append(f"location={location.replace(' ', '%20')}")
-            if time_period:
-                params.append(f"f_TPR={self._get_time_period_code(time_period)}")
-            url = f"{base_url}?{'&'.join(params)}"
-            
-            self.logger.info(f"Current URL before navigation: {self.page.url}")
-            self.logger.info(f"Navigating to {url}")
-            
+        max_retries = 3
+        url = None
+        for attempt in range(1, max_retries + 1):
             try:
+                # Build URL
+                base_url = "https://www.linkedin.com/jobs/search"
+                params = [
+                    f"keywords={keywords.replace(' ', '%20')}"
+                ]
+                if location:
+                    params.append(f"location={location.replace(' ', '%20')}")
+                if time_period:
+                    params.append(f"f_TPR={self._get_time_period_code(time_period)}")
+                url = f"{base_url}?{'&'.join(params)}"
+
+                if attempt > 1:
+                    await self._cleanup()
+                    # Reapply the same proxy config
+                    await self._initialize()
+
+                self.logger.info(f"Current URL before navigation: {self.page.url}")
+                self.logger.info(f"Navigating to {url}")
                 await self.page.goto(url, timeout=60000, wait_until='domcontentloaded')
                 self.logger.info(f"Successfully navigated to: {self.page.url}")
+                if 'chrome-error://chromewebdata/' in self.page.url:
+                    raise Exception("Navigation ended up on unexpected URL: chrome-error://chromewebdata/")
+                break  # Success!
             except Exception as nav_error:
-                self.logger.error(f"Navigation failed: {nav_error}")
-                self.logger.info(f"Current URL after failed navigation: {self.page.url}")
-                await self._post_watchdog_screenshot(f"Navigation failed: {nav_error}")
-                if self.page.url == 'about:blank':
-                    self.logger.error("Browser stuck on about:blank - navigation completely failed")
+                self.logger.error(f"Attempt {attempt} navigation failed: {nav_error}")
+                if attempt == max_retries:
+                    await self._post_watchdog_screenshot(f"All navigation attempts failed for {url}: {nav_error}")
                     return []
-                if 'linkedin.com' not in self.page.url:
-                    self.logger.error(f"Navigation ended up on unexpected URL: {self.page.url}")
-                    return []
-            
+                await asyncio.sleep(2 * attempt)  # Exponential backoff
+        try:
             await self._random_delay(2, 4)
             current_url_after_delay = self.page.url
             self.logger.info(f"URL after delay: {current_url_after_delay}")
