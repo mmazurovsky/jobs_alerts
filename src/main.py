@@ -8,6 +8,9 @@ import signal
 import sys
 from typing import Optional
 from pathlib import Path
+import threading
+from fastapi import FastAPI
+import uvicorn
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -39,6 +42,15 @@ async def handle_shutdown(signum: int, frame: Optional[object]) -> None:
     await container.shutdown()
     sys.exit(0)
 
+def start_health_server():
+    app = FastAPI()
+
+    @app.get("/healthz")
+    async def health():
+        return {"status": "ok"}
+
+    uvicorn.run(app, host="0.0.0.0", port=8080, log_level="warning")
+
 async def main() -> None:
     """Main application entry point."""
     container = None
@@ -59,6 +71,9 @@ async def main() -> None:
         # Set up signal handlers
         signal.signal(signal.SIGINT, lambda s, f: asyncio.create_task(handle_shutdown(s, f)))
         signal.signal(signal.SIGTERM, lambda s, f: asyncio.create_task(handle_shutdown(s, f)))
+        
+        # Start health server in background
+        threading.Thread(target=start_health_server, daemon=True).start()
         
         # Keep the application running
         while True:

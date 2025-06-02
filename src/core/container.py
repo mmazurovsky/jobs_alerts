@@ -6,10 +6,12 @@ from typing import Optional
 
 from src.bot.telegram_bot import TelegramBot
 from src.core.config import Config
-from src.data.mongo_manager import MongoManager
+from src.data.mongo_connection import MongoConnection
 from src.schedulers.job_search_scheduler import JobSearchScheduler
 from src.user.job_search_manager import JobSearchManager
 from src.data.data import StreamManager
+from src.core.stores.job_search_store import JobSearchStore
+from src.core.stores.sent_jobs_store import SentJobsStore
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +21,9 @@ class Container:
     def __init__(self):
         """Initialize the container."""
         self._config: Optional[Config] = None
-        self._mongo_manager: Optional[MongoManager] = None
+        self._mongo_connection: Optional[MongoConnection] = None
+        self._job_search_store: Optional[JobSearchStore] = None
+        self._sent_jobs_store: Optional[SentJobsStore] = None
         self._job_search_manager: Optional[JobSearchManager] = None
         self._telegram_bot: Optional[TelegramBot] = None
         self._scheduler: Optional[JobSearchScheduler] = None
@@ -33,19 +37,29 @@ class Container:
         return self._config
     
     @property
-    def mongo_manager(self) -> MongoManager:
-        """Get the MongoDB manager instance."""
-        if not self._mongo_manager:
-            self._mongo_manager = MongoManager()
-        return self._mongo_manager
+    def mongo_connection(self) -> MongoConnection:
+        if not self._mongo_connection:
+            self._mongo_connection = MongoConnection()
+        return self._mongo_connection
+    
+    @property
+    def job_search_store(self) -> JobSearchStore:
+        if not self._job_search_store:
+            self._job_search_store = JobSearchStore(self.mongo_connection)
+        return self._job_search_store
+    
+    @property
+    def sent_jobs_store(self) -> SentJobsStore:
+        if not self._sent_jobs_store:
+            self._sent_jobs_store = SentJobsStore(self.mongo_connection)
+        return self._sent_jobs_store
     
     @property
     def job_search_manager(self) -> JobSearchManager:
         """Get the job search manager instance."""
         if not self._job_search_manager:
-            self._job_search_manager = JobSearchManager(mongo_manager=self.mongo_manager, job_search_scheduler=self.scheduler)
+            self._job_search_manager = JobSearchManager(job_search_store=self.job_search_store, job_search_scheduler=self.scheduler)
         return self._job_search_manager
-    
     
     @property
     def telegram_bot(self) -> TelegramBot:
@@ -62,60 +76,47 @@ class Container:
         return self._telegram_bot
     
     @property
-    def scheduler(self) -> JobSearchScheduler:
-        """Get the job search scheduler instance."""
-        if not self._scheduler:
-            self._scheduler = JobSearchScheduler(
-                stream_manager=self.stream_manager
-            )
-        return self._scheduler
-    
-    @property
     def stream_manager(self) -> StreamManager:
         if self._stream_manager is None:
             self._stream_manager = StreamManager()
         return self._stream_manager
     
+    @property
+    def scheduler(self) -> JobSearchScheduler:
+        """Get the job search scheduler instance."""
+        if not self._scheduler:
+            self._scheduler = JobSearchScheduler(
+                sent_jobs_store=self.sent_jobs_store,
+                stream_manager=self.stream_manager
+            )
+        return self._scheduler
+    
+
+    
     async def initialize(self) -> None:
         """Initialize all services."""
         try:
-            # Initialize MongoDB first
-            await self.mongo_manager.connect()
-            
-            # Initialize job search manager
+            await self.mongo_connection.connect()
+            await self.job_search_store.connect()
+            await self.sent_jobs_store.connect()
             await self.job_search_manager.initialize()
-            
-            # Initialize Telegram bot
             await self.telegram_bot.initialize()
-            
-            # Initialize scheduler last
             await self.scheduler.initialize()
-            
             logger.info("All services initialized successfully")
-            
         except Exception as e:
             logger.error(f"Error initializing services: {e}")
-            # Don't call shutdown here as it might cause issues with uninitialized services
             raise
     
     async def shutdown(self) -> None:
         """Shutdown all services."""
         try:
-            # Shutdown scheduler first if it was initialized
             if self._scheduler and hasattr(self._scheduler, '_running'):
                 await self._scheduler.stop()
-            
-            # Shutdown Telegram bot if it was initialized
             if self._telegram_bot and hasattr(self._telegram_bot, 'application'):
                 await self._telegram_bot.stop()
-            
-            
-            # Close MongoDB connection last if it was initialized
-            if self._mongo_manager and hasattr(self._mongo_manager, 'client'):
-                await self._mongo_manager.close()
-            
+            if self._mongo_connection and hasattr(self._mongo_connection, 'client'):
+                await self._mongo_connection.close()
             logger.info("All services shut down successfully")
-            
         except Exception as e:
             logger.error(f"Error shutting down services: {e}")
             raise

@@ -5,10 +5,16 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      platforms:
+        - linux/amd64
+    image: ${MY_IMAGE}
     env_file:
       - .env
     volumes:
       - ./logs:/home/scraper/app/logs
       - ./screenshots:/home/scraper/app/screenshots
       - ./state:/home/scraper/app/state
-    restart: unless-stopped 
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+    ports:
+      - "8080:8080" 

@@ -7,24 +7,30 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Set
 import os
 import random
+import re
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from src.data.data import JobSearchOut, StreamManager, TimePeriod, JobListing, SentJobsTracker, StreamType, StreamEvent
+from src.data.data import JobSearchOut, StreamManager, TimePeriod, JobListing, StreamType, StreamEvent
 from src.core.linkedin_scraper_guest import LinkedInScraperGuest
+from src.core.stores.sent_jobs_store import SentJobsStore
+from src.data.mongo_connection import MongoConnection
 
 logger = logging.getLogger(__name__)
+
+def escape_markdown(text: str) -> str:
+    return re.sub(r'([_*\[\]()~`>#+\-=|{}.!])', r'\\\1', text)
 
 class JobSearchScheduler:
     """Scheduler for periodic job searches using APScheduler."""
     
-    def __init__(self, stream_manager: StreamManager):
+    def __init__(self, stream_manager: StreamManager, sent_jobs_store: SentJobsStore):
         """Initialize the scheduler."""
         self._stream_manager = stream_manager
         self._scheduler = AsyncIOScheduler()
         self._active_searches: Dict[str, JobSearchOut] = {}  # search_id -> JobSearch
-        self._sent_jobs_tracker = SentJobsTracker()  # Use SentJobsTracker for all users
+        self._sent_jobs_store = sent_jobs_store
     
     async def initialize(self) -> None:
         """Initialize the scheduler."""
@@ -128,11 +134,10 @@ class JobSearchScheduler:
             )
             
             if jobs:
-                # Filter out jobs that have already been sent to this user
-                new_jobs = [
-                    job for job in jobs 
-                    if not self._sent_jobs_tracker.is_job_sent(user_id, job.link)
-                ]
+                # Fetch sent jobs for user
+                sent_jobs = await self._sent_jobs_store.get_sent_jobs_for_user(user_id)
+                sent_job_urls = {job.job_url for job in sent_jobs}
+                new_jobs = [job for job in jobs if job.link not in sent_job_urls]
                 
                 if new_jobs:
                     # Format and send job listings
@@ -141,16 +146,16 @@ class JobSearchScheduler:
                     )
                     for job in new_jobs:
                         message += (
-                            f"🏢 {job.company}\n"
-                            f"💼 {job.title}\n"
-                            f"📍 {job.location}\n"
+                            f"🏢 {escape_markdown(job.company)}\n"
+                            f"💼 {escape_markdown(job.title)}\n"
+                            f"📍 {escape_markdown(job.location)}\n"
                             f"⏰ {job.created_ago}\n"
                             f"🔗 {job.link}\n\n"
                         )
                     
                     # Mark jobs as sent
                     for job in new_jobs:
-                        self._sent_jobs_tracker.mark_job_sent(user_id, job.link)
+                        await self._sent_jobs_store.save_sent_job(user_id, job.link)
                     
                     # Create message data instance
                     message_data = {
@@ -169,7 +174,10 @@ class JobSearchScheduler:
             
             # Close the browser session
             await scraper.close()
-            
+        except asyncio.CancelledError:
+            logger.info(f"Job search for user {job_search.user_id} was cancelled (likely due to shutdown). No error.")
+            # Do not send user message, just exit
+            return
         except Exception as e:
             logger.error(f"Error checking job search: {e}")
             # Create error message data instance
@@ -177,7 +185,6 @@ class JobSearchScheduler:
                 "user_id": job_search.user_id,
                 "message": "Sorry, there was an error checking for new jobs. Please try again later."
             }
-            
             # Send error message through stream manager
             self._stream_manager.publish(StreamEvent(
                 type=StreamType.SEND_MESSAGE,
