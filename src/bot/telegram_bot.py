@@ -488,7 +488,8 @@ class TelegramBot:
             else:
                 await self.application.bot.send_message(
                     chat_id=user_id,
-                    text=message
+                    text=message, 
+                    parse_mode=None
                 )
         except Exception as e:
             logger.error(f"Error sending message: {e}")

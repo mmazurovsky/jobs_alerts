@@ -19,9 +19,6 @@ from src.data.mongo_connection import MongoConnection
 
 logger = logging.getLogger(__name__)
 
-def escape_markdown(text: str) -> str:
-    return re.sub(r'([_*\[\]()~`>#+\-=|{}.!])', r'\\\1', text)
-
 class JobSearchScheduler:
     """Scheduler for periodic job searches using APScheduler."""
     
@@ -146,9 +143,9 @@ class JobSearchScheduler:
                     )
                     for job in new_jobs:
                         message += (
-                            f"🏢 {escape_markdown(job.company)}\n"
-                            f"💼 {escape_markdown(job.title)}\n"
-                            f"📍 {escape_markdown(job.location)}\n"
+                            f"🏢 {job.company}\n"
+                            f"💼 {job.title}\n"
+                            f"📍 {job.location}\n"
                             f"⏰ {job.created_ago}\n"
                             f"🔗 {job.link}\n\n"
                         )
