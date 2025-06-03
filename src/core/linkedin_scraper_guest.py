@@ -450,8 +450,9 @@ class LinkedInScraperGuest:
     async def _get_job_details(self, job_id: str) -> Optional[ShortJobListing]:
         """Fetch job details for a single job id from the job detail API page."""
         try:
-            url = f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
-            await self.page.goto(url, timeout=30000, wait_until='domcontentloaded')
+            api_url = f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
+            public_url = f"https://www.linkedin.com/jobs/view/{job_id}/"
+            await self.page.goto(api_url, timeout=30000, wait_until='domcontentloaded')
             await self._random_delay(0.5, 1.5)
             # Title
             title_el = await self.page.query_selector('body > section > div > div.top-card-layout__entity-info-container.flex.flex-wrap.papabear\\:flex-nowrap > div > a > h2')
@@ -469,7 +470,7 @@ class LinkedInScraperGuest:
                 title=title.strip(),
                 company=company.strip(),
                 location=location.strip(),
-                link=url,
+                link=public_url,
                 created_ago=created_ago.strip(),
             )
         except Exception as e:
@@ -541,12 +542,18 @@ class LinkedInScraperGuest:
                 if job_types:
                     self.logger.info(f"Applying job type filters: {[jt.label for jt in job_types]}")
                     await self._random_delay(1, 3)
-                    await self._apply_job_type_filter(job_types)
+                    job_type_applied = await self._apply_job_type_filter(job_types)
+                    if not job_type_applied:
+                        self.logger.error("None of selected job type filters could be applied. Aborting search.")
+                        return []
                 # Select remote type filter if needed
                 if remote_types:
                     self.logger.info(f"Applying remote type filters: {[rt.label for rt in remote_types]}")
                     await self._random_delay(1, 3)
-                    await self._apply_remote_type_filter(remote_types)
+                    remote_type_applied = await self._apply_remote_type_filter(remote_types)
+                    if not remote_type_applied:
+                        self.logger.error("None of selected remote type filters could be applied. Aborting search.")
+                        return []
 
                 # Check for authwall in URL after applying filters
                 current_url = self.page.url
@@ -650,19 +657,17 @@ class LinkedInScraperGuest:
             await element.click()
 
     async def _apply_job_type_filter(self, job_types: List[JobType]):
-        # Click the Job type filter button
         btn = await self.page.query_selector(
             '#jserp-filters > ul > li:nth-child(3) > div > div > button')
         if btn:
             await self._human_like_click(btn)
             await self._random_delay(0.5, 1.5)
-            # Get all labels in the job type filter dropdown
             labels = await self.page.query_selector_all('div[aria-label="Job type filter options"] label')
             label_texts = [await label_el.inner_text() for label_el in labels]
             self.logger.info(f"Job type filter labels found: {label_texts}")
+            any_applied = False
             for jt in job_types:
                 label_text = jt.label.lower()
-                found = False
                 for label_el in labels:
                     text = (await label_el.inner_text()).lower()
                     self.logger.info(f"Checking label: '{text}' for job type '{label_text}'")
@@ -681,13 +686,8 @@ class LinkedInScraperGuest:
                                     await cb.check()
                                     checked = await cb.is_checked()
                                     self.logger.info(f"Checkbox for job type '{jt.label}' checked: {checked}")
-                            found = True
+                            any_applied = True
                             break
-                        else:
-                            self.logger.warning(f"Label for job type '{jt.label}' is not visible or not enabled.")
-                if not found:
-                    self.logger.warning(f"Job type label not found or not clickable in dropdown: {jt.label}")
-            # Click the 'Done' button for job type filter
             await self._random_delay(0.5, 1)
             done_btn = await self.page.query_selector('#jserp-filters > ul > li:nth-child(3) > div > div > div > button')
             if done_btn:
@@ -695,24 +695,23 @@ class LinkedInScraperGuest:
                 self.logger.info("Clicked 'Done' button for job type filter.")
             else:
                 self.logger.info("No 'Done' button found for job type filter.")
-            # Click outside to close dropdown
             await self.page.keyboard.press('Escape')
             await self._random_delay(0.5, 1.5)
+            return any_applied
+        return False
 
     async def _apply_remote_type_filter(self, remote_types: List[RemoteType]):
-        # Click the Remote filter button
         btn = await self.page.query_selector(
             '#jserp-filters > ul > li:nth-child(7) > div > div > button')
         if btn:
             await self._human_like_click(btn)
             await self._random_delay(0.5, 1.5)
-            # Get all labels in the remote type filter dropdown
             labels = await self.page.query_selector_all('div[aria-label="Remote filter options"] label')
             label_texts = [await label_el.inner_text() for label_el in labels]
             self.logger.info(f"Remote type filter labels found: {label_texts}")
+            any_applied = False
             for rt in remote_types:
                 label_text = rt.label.lower()
-                found = False
                 for label_el in labels:
                     text = (await label_el.inner_text()).lower()
                     self.logger.info(f"Checking label: '{text}' for remote type '{label_text}'")
@@ -731,13 +730,8 @@ class LinkedInScraperGuest:
                                     await cb.check()
                                     checked = await cb.is_checked()
                                     self.logger.info(f"Checkbox for remote type '{rt.label}' checked: {checked}")
-                            found = True
+                            any_applied = True
                             break
-                        else:
-                            self.logger.warning(f"Label for remote type '{rt.label}' is not visible or not enabled.")
-                if not found:
-                    self.logger.warning(f"Remote type label not found or not clickable in dropdown: {rt.label}")
-            # Click the 'Done' button for remote type filter
             await self._random_delay(0.5, 1)
             done_btn = await self.page.query_selector('#jserp-filters > ul > li:nth-child(7) > div > div > div > button')
             if done_btn:
@@ -747,6 +741,8 @@ class LinkedInScraperGuest:
                 self.logger.info("No 'Done' button found for remote type filter.")
             await self.page.keyboard.press('Escape')
             await self._random_delay(0.5, 1.5)
+            return any_applied
+        return False
 
     @staticmethod
     def _strip_query(url: str) -> str:
