@@ -447,6 +447,44 @@ class LinkedInScraperGuest:
         await self._cleanup()
         await self._initialize()
 
+    async def _get_job_details(self, job_id: str) -> Optional[ShortJobListing]:
+        """Fetch job details for a single job id from the job detail API page."""
+        try:
+            url = f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
+            await self.page.goto(url, timeout=30000, wait_until='domcontentloaded')
+            await self._random_delay(0.5, 1.5)
+            # Title
+            title_el = await self.page.query_selector('body > section > div > div.top-card-layout__entity-info-container.flex.flex-wrap.papabear\\:flex-nowrap > div > a > h2')
+            title = await title_el.inner_text() if title_el else ''
+            # Company
+            company_el = await self.page.query_selector('body > section > div > div.top-card-layout__entity-info-container.flex.flex-wrap.papabear\\:flex-nowrap > div > h4 > div:nth-child(1) > span:nth-child(1) > a')
+            company = await company_el.inner_text() if company_el else ''
+            # Location
+            location_el = await self.page.query_selector('body > section > div > div.top-card-layout__entity-info-container.flex.flex-wrap.papabear\\:flex-nowrap > div > h4 > div:nth-child(1) > span.topcard__flavor.topcard__flavor--bullet')
+            location = await location_el.inner_text() if location_el else ''
+            # Posted time
+            posted_el = await self.page.query_selector('body > section > div > div.top-card-layout__entity-info-container.flex.flex-wrap.papabear\\:flex-nowrap > div > h4 > div:nth-child(2) > span')
+            created_ago = await posted_el.inner_text() if posted_el else ''
+            return ShortJobListing(
+                title=title.strip(),
+                company=company.strip(),
+                location=location.strip(),
+                link=url,
+                created_ago=created_ago.strip(),
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to get job details for job_id={job_id}: {e}")
+            return None
+
+    async def _get_job_details_bulk(self, job_ids: list[str]) -> list[ShortJobListing]:
+        """Fetch job details for a list of job ids."""
+        results = []
+        for job_id in job_ids:
+            job = await self._get_job_details(job_id)
+            if job:
+                results.append(job)
+        return results
+
     async def _search_jobs_internal(
         self,
         keywords: str,
@@ -549,39 +587,35 @@ class LinkedInScraperGuest:
                 else:
                     self.logger.warning(".jobs-search__results-list container NOT found!")
 
-                # After scrolling job results, check for sign-in overlay
-                overlay_selector = 'h2.blurred_overlay__title'
-                overlay_el = await self.page.query_selector(overlay_selector)
-                if overlay_el:
-                    overlay_text = await overlay_el.inner_text()
-                    if 'Sign in to view' in overlay_text:
-                        self.logger.error("Detected LinkedIn overlay: 'Sign in to view all job postings'. Aborting search.")
-                        await self._restart_session()
-                        await asyncio.sleep(2 * attempt)
-                        attempt += 1
-                        continue  # Actually retry the search from the top of the while loop
-
+                # # After scrolling job results, check for sign-in overlay
+                # overlay_selector = 'h2.blurred_overlay__title'
+                # overlay_el = await self.page.query_selector(overlay_selector)
+                # if overlay_el:
+                #     overlay_text = await overlay_el.inner_text()
+                #     if 'Sign in to view' in overlay_text:
+                #         self.logger.error("Detected LinkedIn overlay: 'Sign in to view all job postings'. Aborting search.")
+                #         await self._restart_session()
+                #         await asyncio.sleep(2 * attempt)
+                #         attempt += 1
+                #         continue
                 # Get all job cards after scrolling
                 job_cards = await self.page.query_selector_all('.jobs-search__results-list > li')
                 self.logger.info(f"Found {len(job_cards)} job cards after scrolling.")
-                results = []
-                limit = max_jobs if max_jobs is not None else len(job_cards)
-                for idx, card in enumerate(job_cards[:limit]):
-                    job = await self._extract_job_details(card, idx)
-                    if job:
-                        # Detect if all fields contain at least one '*' character
-                        if all(self._is_masked(getattr(job, field)) for field in ["title", "company", "location"]):
-                            self.logger.error(f"Detected masked job '{job.title}' - {job.company} - {job.location} is masked")
-                            self.logger.warning("Job is masked (anti-bot detected). Restarting session and retrying...")
-                            await self._restart_session()
-                            await asyncio.sleep(2 * attempt)
-                            attempt += 1
-                            continue  # Actually retry the search from the top of the while loop
-                        if blacklist and any(b.lower() in job.title.lower() for b in blacklist):
-                            self.logger.info(f"Filtered out job '{job.title}' due to blacklist match.")
-                            continue
-                        results.append(job)
-                self.logger.info(f"Extracted {len(results)} jobs from {len(job_cards)} cards.")
+                # Extract job ids only from data-entity-urn inside the job card div
+                job_ids = []
+                for card in job_cards:
+                    div = await card.query_selector('div[data-entity-urn]')
+                    if div:
+                        entity_urn = await div.get_attribute('data-entity-urn')
+                        if entity_urn and entity_urn.startswith('urn:li:jobPosting:'):
+                            job_id = entity_urn.split(':')[-1]
+                            job_ids.append(job_id)
+                if max_jobs is not None:
+                    job_ids = job_ids[:max_jobs]
+                self.logger.info(f"Collected {len(job_ids)} job ids for detail extraction.")
+                # Get job details for all job ids
+                results = await self._get_job_details_bulk(job_ids)
+                self.logger.info(f"Extracted {len(results)} jobs from {len(job_ids)} job ids.")
                 return results
             except Exception as nav_error:
                 self.logger.error(f"Attempt {attempt} navigation failed: {nav_error}")
