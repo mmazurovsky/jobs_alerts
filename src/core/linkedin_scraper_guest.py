@@ -8,6 +8,7 @@ from src.data.data import JobType, RemoteType, TimePeriod, ShortJobListing, Stre
 import time
 import random
 from urllib.parse import urlparse, urlunparse
+from playwright_stealth import stealth_async
 
 class LinkedInScraperGuest:
     """LinkedIn job scraper for public/guest access (no login)."""
@@ -361,7 +362,9 @@ class LinkedInScraperGuest:
             try:
                 self.logger.info("Creating new page...")
                 self.page = await self.context.new_page()
-                self.logger.info("Page created successfully")
+                # Inject playwright-stealth
+                await stealth_async(self.page)
+                self.logger.info("Stealth script injected.")
                 await self._block_resource_types()
                 # Test navigation to verify everything works
                 self.logger.info("Testing navigation to about:blank...")
@@ -440,6 +443,10 @@ class LinkedInScraperGuest:
                 except asyncio.CancelledError:
                     pass
 
+    async def _restart_session(self):
+        await self._cleanup()
+        await self._initialize()
+
     async def _search_jobs_internal(
         self,
         keywords: str,
@@ -454,7 +461,8 @@ class LinkedInScraperGuest:
         self._watchdog_task = asyncio.create_task(self._watchdog())
         max_retries = 3
         url = None
-        for attempt in range(1, max_retries + 1):
+        attempt = 1
+        while attempt <= max_retries:
             try:
                 # Build URL
                 base_url = "https://www.linkedin.com/jobs/search"
@@ -468,9 +476,7 @@ class LinkedInScraperGuest:
                 url = f"{base_url}?{'&'.join(params)}"
 
                 if attempt > 1:
-                    await self._cleanup()
-                    # Reapply the same proxy config
-                    await self._initialize()
+                    await self._restart_session()
 
                 self.logger.info(f"Current URL before navigation: {self.page.url}")
                 self.logger.info(f"Navigating to {url}")
@@ -478,100 +484,115 @@ class LinkedInScraperGuest:
                 self.logger.info(f"Successfully navigated to: {self.page.url}")
                 if 'chrome-error://chromewebdata/' in self.page.url:
                     raise Exception("Navigation ended up on unexpected URL: chrome-error://chromewebdata/")
-                break  # Success!
+
+                await self._random_delay(2, 4)
+                current_url_after_delay = self.page.url
+                self.logger.info(f"URL after delay: {current_url_after_delay}")
+                await self._human_like_mouse_movement()
+                await self._close_sign_in_modal()
+                await self._reject_cookies()
+
+                # Check for no results after loading the page, before applying filters
+                self.logger.info("Checking for no-results section before applying filters...")
+                no_results_section = await self.page.query_selector('section.no-results')
+                if no_results_section:
+                    self.logger.info("No jobs found - detected 'no-results' section before filters. Skipping filter application.")
+                    return []
+
+                # Select job type filter if needed
+                if job_types:
+                    self.logger.info(f"Applying job type filters: {[jt.label for jt in job_types]}")
+                    await self._random_delay(1, 3)
+                    await self._apply_job_type_filter(job_types)
+                # Select remote type filter if needed
+                if remote_types:
+                    self.logger.info(f"Applying remote type filters: {[rt.label for rt in remote_types]}")
+                    await self._random_delay(1, 3)
+                    await self._apply_remote_type_filter(remote_types)
+
+                # Check for authwall in URL after applying filters
+                current_url = self.page.url
+                if 'authwall' in current_url:
+                    self.logger.warning(f"Authwall detected in URL: {current_url}. Waiting before going back to previous page.")
+                    await self._random_delay(2, 4)
+                    await self.page.go_back()
+                    await self._random_delay(1.5, 3)
+                    current_url = self.page.url
+                    self.logger.info(f"Returned to URL: {current_url}")
+                    if 'authwall' in current_url:
+                        self.logger.warning(f"Still on authwall after going back. Aborting search.")
+                        return []
+
+                # Check for no results again after applying filters
+                self.logger.info("Checking for no-results section after applying filters...")
+                no_results_section = await self.page.query_selector('section.no-results')
+                if no_results_section:
+                    self.logger.info("No jobs found after applying filters - detected 'no-results' section")
+                    return []
+
+                # Wait for jobs container to load
+                self.logger.info("Waiting for .jobs-search__results-list container after filters...")
+                try:
+                    await self.page.wait_for_selector('.jobs-search__results-list', timeout=60000)
+                except Exception as wait_error:
+                    self.logger.error(f"Timeout or error waiting for .jobs-search__results-list: {wait_error}")
+                    html = await self.page.content()
+                    self.logger.error(f"Page HTML (first 2000 chars): {html[:2000]}")
+                    await self._post_watchdog_screenshot(f"Timeout or error waiting for .jobs-search__results-list: {wait_error}")
+                    return []
+                container = await self.page.query_selector('.jobs-search__results-list')
+                if container:
+                    self.logger.info(".jobs-search__results-list container found.")
+                    self.logger.info("Delaying before waiting for job cards...")
+                    await self._random_delay(2, 4)
+                    await self._scroll_job_results()
+                else:
+                    self.logger.warning(".jobs-search__results-list container NOT found!")
+
+                # After scrolling job results, check for sign-in overlay
+                overlay_selector = 'h2.blurred_overlay__title'
+                overlay_el = await self.page.query_selector(overlay_selector)
+                if overlay_el:
+                    overlay_text = await overlay_el.inner_text()
+                    if 'Sign in to view' in overlay_text:
+                        self.logger.error("Detected LinkedIn overlay: 'Sign in to view all job postings'. Aborting search.")
+                        await self._restart_session()
+                        await asyncio.sleep(2 * attempt)
+                        attempt += 1
+                        continue  # Actually retry the search from the top of the while loop
+
+                # Get all job cards after scrolling
+                job_cards = await self.page.query_selector_all('.jobs-search__results-list > li')
+                self.logger.info(f"Found {len(job_cards)} job cards after scrolling.")
+                results = []
+                limit = max_jobs if max_jobs is not None else len(job_cards)
+                for idx, card in enumerate(job_cards[:limit]):
+                    job = await self._extract_job_details(card, idx)
+                    if job:
+                        # Detect if all fields contain at least one '*' character
+                        if all(self._is_masked(getattr(job, field)) for field in ["title", "company", "location"]):
+                            self.logger.error(f"Detected masked job '{job.title}' - {job.company} - {job.location} is masked")
+                            self.logger.warning("Job is masked (anti-bot detected). Restarting session and retrying...")
+                            await self._restart_session()
+                            await asyncio.sleep(2 * attempt)
+                            attempt += 1
+                            continue  # Actually retry the search from the top of the while loop
+                        if blacklist and any(b.lower() in job.title.lower() for b in blacklist):
+                            self.logger.info(f"Filtered out job '{job.title}' due to blacklist match.")
+                            continue
+                        results.append(job)
+                self.logger.info(f"Extracted {len(results)} jobs from {len(job_cards)} cards.")
+                return results
             except Exception as nav_error:
                 self.logger.error(f"Attempt {attempt} navigation failed: {nav_error}")
                 if attempt == max_retries:
                     await self._post_watchdog_screenshot(f"All navigation attempts failed for {url}: {nav_error}")
                     return []
-                await asyncio.sleep(2 * attempt)  # Exponential backoff
-        try:
-            await self._random_delay(2, 4)
-            current_url_after_delay = self.page.url
-            self.logger.info(f"URL after delay: {current_url_after_delay}")
-            await self._human_like_mouse_movement()
-            await self._close_sign_in_modal()
-            await self._reject_cookies()
-
-            # Check for no results after loading the page, before applying filters
-            self.logger.info("Checking for no-results section before applying filters...")
-            no_results_section = await self.page.query_selector('section.no-results')
-            if no_results_section:
-                self.logger.info("No jobs found - detected 'no-results' section before filters. Skipping filter application.")
-                return []
-
-            # Select job type filter if needed
-            if job_types:
-                self.logger.info(f"Applying job type filters: {[jt.label for jt in job_types]}")
-                await self._random_delay(1, 3)
-                await self._apply_job_type_filter(job_types)
-            # Select remote type filter if needed
-            if remote_types:
-                self.logger.info(f"Applying remote type filters: {[rt.label for rt in remote_types]}")
-                await self._random_delay(1, 3)
-                await self._apply_remote_type_filter(remote_types)
-
-            # Check for authwall in URL after applying filters
-            current_url = self.page.url
-            if 'authwall' in current_url:
-                self.logger.warning(f"Authwall detected in URL: {current_url}. Waiting before going back to previous page.")
-                await self._random_delay(2, 4)
-                await self.page.go_back()
-                await self._random_delay(1.5, 3)
-                current_url = self.page.url
-                self.logger.info(f"Returned to URL: {current_url}")
-                if 'authwall' in current_url:
-                    self.logger.warning(f"Still on authwall after going back. Aborting search.")
-                    return []
-
-            # Check for no results again after applying filters
-            self.logger.info("Checking for no-results section after applying filters...")
-            no_results_section = await self.page.query_selector('section.no-results')
-            if no_results_section:
-                self.logger.info("No jobs found after applying filters - detected 'no-results' section")
-                return []
-
-            # Wait for jobs container to load
-            self.logger.info("Waiting for .jobs-search__results-list container after filters...")
-            try:
-                await self.page.wait_for_selector('.jobs-search__results-list', timeout=60000)
-            except Exception as wait_error:
-                self.logger.error(f"Timeout or error waiting for .jobs-search__results-list: {wait_error}")
-                html = await self.page.content()
-                self.logger.error(f"Page HTML (first 2000 chars): {html[:2000]}")
-                await self._post_watchdog_screenshot(f"Timeout or error waiting for .jobs-search__results-list: {wait_error}")
-                return []
-            container = await self.page.query_selector('.jobs-search__results-list')
-            if container:
-                self.logger.info(".jobs-search__results-list container found.")
-                self.logger.info("Delaying before waiting for job cards...")
-                await self._random_delay(2, 4)
-                await self._scroll_job_results()
-            else:
-                self.logger.warning(".jobs-search__results-list container NOT found!")
-
-            # Get all job cards after scrolling
-            job_cards = await self.page.query_selector_all('.jobs-search__results-list > li')
-            self.logger.info(f"Found {len(job_cards)} job cards after scrolling.")
-            results = []
-            limit = max_jobs if max_jobs is not None else len(job_cards)
-            for idx, card in enumerate(job_cards[:limit]):
-                job = await self._extract_job_details(card, idx)
-                if job:
-                    if blacklist and any(b.lower() in job.title.lower() for b in blacklist):
-                        self.logger.info(f"Filtered out job '{job.title}' due to blacklist match.")
-                        continue
-                    results.append(job)
-            self.logger.info(f"Extracted {len(results)} jobs from {len(job_cards)} cards.")
-            return results
-        finally:
-            if self._watchdog_task:
-                self._watchdog_task.cancel()
-                try:
-                    await self._watchdog_task
-                except asyncio.CancelledError:
-                    pass
-            await self.close()
+                await self._restart_session()
+                await asyncio.sleep(2 * attempt)
+                attempt += 1
+                continue
+        return []
 
     async def _human_like_click(self, element):
         """Click an element with human-like behavior - random position within element."""
@@ -872,3 +893,8 @@ class LinkedInScraperGuest:
             await self._post_watchdog_screenshot(f"Proxy connection test failed: {e}")
             await self.close()
             return False 
+
+    @staticmethod
+    def _is_masked(value: str) -> bool:
+        # Consider masked if the value contains at least one '*' character
+        return value is not None and '*' in value 
