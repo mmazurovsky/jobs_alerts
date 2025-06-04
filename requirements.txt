@@ -15,6 +15,7 @@ pydantic>=2.0.0
 playwright-stealth
 fastapi==0.115.12
 uvicorn==0.34.3
+pytz
 
 # Development dependencies
 pytest>=7.4.0
