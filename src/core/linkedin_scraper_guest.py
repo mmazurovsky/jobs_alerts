@@ -710,7 +710,7 @@ class LinkedInScraperGuest:
                 await self._human_like_click(done_btn)
                 self.logger.info("Clicked 'Done' button for job type filter.")
             else:
-                self.logger.info("No 'Done' button found for job type filter.")
+                self.logger.error("No 'Done' button found for job type filter.")
             await self.page.keyboard.press('Escape')
             await self._random_delay(0.5, 1.5)
             return any_applied
@@ -754,7 +754,7 @@ class LinkedInScraperGuest:
                 await self._human_like_click(done_btn)
                 self.logger.info("Clicked 'Done' button for remote type filter.")
             else:
-                self.logger.info("No 'Done' button found for remote type filter.")
+                self.logger.error("No 'Done' button found for remote type filter.")
             await self.page.keyboard.press('Escape')
             await self._random_delay(0.5, 1.5)
             return any_applied
@@ -835,7 +835,7 @@ class LinkedInScraperGuest:
                 self.logger.info("Clicked 'Reject' cookies button.")
                 await self._random_delay(0.3, 0.8)
             else:
-                self.logger.info("No 'Reject' cookies button found.")
+                self.logger.warning("No 'Reject' cookies button found.")
         except Exception as e:
             self.logger.warning(f"Failed to reject cookies: {e}")
 
@@ -926,19 +926,22 @@ class LinkedInScraperGuest:
             self.logger.error(f"Failed to post watchdog screenshot: {e}")
 
     async def check_proxy_connection(self):
-        try:
-            await self._initialize()
-            test_url = "https://www.linkedin.com/"
-            self.logger.info(f"Testing proxy connection by navigating to {test_url}")
-            await self.page.goto(test_url, timeout=20000)
-            self.logger.info("Proxy connection test succeeded.")
-            await self.close()
-            return True
-        except Exception as e:
-            self.logger.error(f"Proxy connection test failed: {e}")
-            await self._post_watchdog_screenshot(f"Proxy connection test failed: {e}")
-            await self.close()
-            return False 
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                await self._initialize()
+                test_url = "https://www.linkedin.com/"
+                self.logger.info(f"Testing proxy connection by navigating to {test_url} (attempt {attempt})")
+                await self.page.goto(test_url, timeout=20000)
+                self.logger.info("Proxy connection test succeeded.")
+                await self._cleanup()
+                return True
+            except Exception as e:
+                await self._cleanup()
+                if attempt == max_retries:
+                    await self._post_watchdog_screenshot(f"Proxy connection test failed on attempt {attempt}: {e}")
+                    return False
+                await asyncio.sleep(2 * attempt)
 
     @staticmethod
     def _is_masked(value: str) -> bool:
