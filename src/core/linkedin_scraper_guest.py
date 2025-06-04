@@ -9,6 +9,8 @@ import time
 import random
 from urllib.parse import urlparse, urlunparse
 from playwright_stealth import stealth_async
+import datetime as datetime
+import pytz as pytz
 
 class LinkedInScraperGuest:
     """LinkedIn job scraper for public/guest access (no login)."""
@@ -503,6 +505,13 @@ class LinkedInScraperGuest:
         attempt = 1
         while attempt <= max_retries:
             try:
+                # Return empty list if CET time is between 00:30 and 06:30
+                berlin_tz = pytz.timezone('Europe/Berlin')
+                now_berlin = datetime.datetime.now(berlin_tz)
+                if (now_berlin.hour == 0 and now_berlin.minute >= 30) or (0 < now_berlin.hour < 6) or (now_berlin.hour == 6 and now_berlin.minute < 30):
+                    self.logger.info("Current time in CET is between 00:30 and 06:30. Skipping job search.")
+                    return []
+
                 # Build URL
                 base_url = "https://www.linkedin.com/jobs/search"
                 params = [
@@ -537,22 +546,29 @@ class LinkedInScraperGuest:
                 if no_results_section:
                     self.logger.info("No jobs found - detected 'no-results' section before filters. Skipping filter application.")
                     return []
-
-                # Select job type filter if needed
-                if job_types:
-                    self.logger.info(f"Applying job type filters: {[jt.label for jt in job_types]}")
-                    await self._random_delay(1, 3)
-                    job_type_applied = await self._apply_job_type_filter(job_types)
-                    if not job_type_applied:
-                        self.logger.error("None of selected job type filters could be applied. Aborting search.")
-                        return []
+                
                 # Select remote type filter if needed
                 if remote_types:
-                    self.logger.info(f"Applying remote type filters: {[rt.label for rt in remote_types]}")
+                    self.logger.info(f"Trying to apply remote type filters: {[rt.label for rt in remote_types]}")
                     await self._random_delay(1, 3)
                     remote_type_applied = await self._apply_remote_type_filter(remote_types)
                     if not remote_type_applied:
-                        self.logger.error("None of selected remote type filters could be applied. Aborting search.")
+                        labels = await self.page.query_selector_all('div[aria-label="Remote filter options"] label')
+                        label_texts = [await label_el.inner_text() for label_el in labels]
+                        current_url = self.page.url
+                        self.logger.error(f"None of selected remote type filters could be applied. URL: {current_url} Available remote type filters: {label_texts}")
+                        return []
+                    
+                # Select job type filter if needed
+                if job_types:
+                    self.logger.info(f"Trying to apply job type filters: {[jt.label for jt in job_types]}")
+                    await self._random_delay(1, 3)
+                    job_type_applied = await self._apply_job_type_filter(job_types)
+                    if not job_type_applied:
+                        labels = await self.page.query_selector_all('div[aria-label="Job type filter options"] label')
+                        label_texts = [await label_el.inner_text() for label_el in labels]
+                        current_url = self.page.url
+                        self.logger.error(f"None of selected job type filters could be applied. URL: {current_url} Available job type filters: {label_texts}")
                         return []
 
                 # Check for authwall in URL after applying filters
@@ -657,8 +673,8 @@ class LinkedInScraperGuest:
             await element.click()
 
     async def _apply_job_type_filter(self, job_types: List[JobType]):
-        btn = await self.page.query_selector(
-            '#jserp-filters > ul > li:nth-child(3) > div > div > button')
+        # Find the Job type filter button by aria-label
+        btn = await self.page.query_selector('button[aria-label^="Job type filter"]')
         if btn:
             await self._human_like_click(btn)
             await self._random_delay(0.5, 1.5)
@@ -701,8 +717,8 @@ class LinkedInScraperGuest:
         return False
 
     async def _apply_remote_type_filter(self, remote_types: List[RemoteType]):
-        btn = await self.page.query_selector(
-            '#jserp-filters > ul > li:nth-child(7) > div > div > button')
+        # Find the Remote filter button by aria-label
+        btn = await self.page.query_selector('button[aria-label^="Remote filter"]')
         if btn:
             await self._human_like_click(btn)
             await self._random_delay(0.5, 1.5)
