@@ -11,6 +11,8 @@ from urllib.parse import urlparse, urlunparse
 from playwright_stealth import stealth_async
 import datetime as datetime
 import pytz as pytz
+import traceback
+from collections import deque
 
 class LinkedInScraperGuest:
     """LinkedIn job scraper for public/guest access (no login)."""
@@ -46,6 +48,12 @@ class LinkedInScraperGuest:
         self._patch_logger()
         self.stream_manager = stream_manager
         self.proxy_config = proxy_config or self._get_default_proxy_config()
+        self._recent_logs = deque(maxlen=50)
+        class MemoryLogHandler(logging.Handler):
+            def emit(inner_self, record):
+                msg = self.logger.handlers[0].format(record) if self.logger.handlers else record.getMessage()
+                self._recent_logs.append(msg)
+        self.logger.addHandler(MemoryLogHandler())
 
     def _patch_logger(self):
         """Patch the logger to update last log time on every log."""
@@ -641,9 +649,11 @@ class LinkedInScraperGuest:
                 self.logger.info(f"Extracted {len(results)} jobs from {len(job_ids)} job ids.")
                 return results
             except Exception as nav_error:
-                self.logger.error(f"Attempt {attempt} navigation failed: {nav_error}")
                 if attempt == max_retries:
-                    await self._post_watchdog_screenshot(f"All navigation attempts failed for {url}: {nav_error}")
+                    await self._post_watchdog_screenshot(
+                        f"All navigation attempts failed for {url}: {nav_error}",
+                        include_logs=True
+                    )
                     return []
                 await self._restart_session()
                 await asyncio.sleep(2 * attempt)
@@ -903,7 +913,7 @@ class LinkedInScraperGuest:
         except Exception as e:
             self.logger.warning(f"Failed to scroll job results list: {e}")
 
-    async def _post_watchdog_screenshot(self, message: str):
+    async def _post_watchdog_screenshot(self, message: str, include_logs: bool = False):
         if not self.page or not self.stream_manager:
             return
         try:
@@ -912,8 +922,12 @@ class LinkedInScraperGuest:
             from datetime import datetime
             screenshot_path = os.path.join(screenshots_dir, f'watchdog_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png')
             await self.page.screenshot(path=screenshot_path)
+            if include_logs:
+                logs = "\n".join(self._recent_logs)
+                stack = traceback.format_exc()
+                message += f"\n\nRecent logs (last 50):\n{logs}\n\nStack trace:\n{stack}"
             event_data = {
-                "message": message + f" Screenshot saved to {screenshot_path}",
+                "message": message + f"\n\nScreenshot saved to {screenshot_path}",
                 "image_path": screenshot_path
             }
             event = StreamEvent(
