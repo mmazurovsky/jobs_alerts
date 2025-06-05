@@ -557,26 +557,28 @@ class LinkedInScraperGuest:
                 
                 # Select remote type filter if needed
                 if remote_types:
-                    self.logger.info(f"Trying to apply remote type filters: {[rt.label for rt in remote_types]}")
+                    selected_filters = [rt.label for rt in remote_types]
+                    self.logger.info(f"Trying to apply remote type filters: {selected_filters}")
                     await self._random_delay(1, 3)
                     remote_type_applied = await self._apply_remote_type_filter(remote_types)
                     if not remote_type_applied:
                         labels = await self.page.query_selector_all('div[aria-label="Remote filter options"] label')
                         label_texts = [await label_el.inner_text() for label_el in labels]
                         current_url = self.page.url
-                        self.logger.error(f"None of selected remote type filters could be applied. URL: {current_url} Available remote type filters: {label_texts}")
+                        self.logger.info(f"None of selected remote type filters could be applied. URL: {current_url}, Available remote type filters: {label_texts}, Selected remote type filters: {selected_filters}")
                         return []
                     
                 # Select job type filter if needed
                 if job_types:
-                    self.logger.info(f"Trying to apply job type filters: {[jt.label for jt in job_types]}")
+                    selected_filters = [jt.label for jt in job_types]
+                    self.logger.info(f"Trying to apply job type filters: {selected_filters}")
                     await self._random_delay(1, 3)
                     job_type_applied = await self._apply_job_type_filter(job_types)
                     if not job_type_applied:
                         labels = await self.page.query_selector_all('div[aria-label="Job type filter options"] label')
                         label_texts = [await label_el.inner_text() for label_el in labels]
                         current_url = self.page.url
-                        self.logger.error(f"None of selected job type filters could be applied. URL: {current_url} Available job type filters: {label_texts}")
+                        self.logger.info(f"None of selected job type filters could be applied. URL: {current_url}, Available job type filters: {label_texts}, Selected job type filters: {selected_filters}")
                         return []
 
                 # Check for authwall in URL after applying filters

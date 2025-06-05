@@ -137,6 +137,7 @@ class TelegramBot:
                 remote_types = ", ".join(t.label for t in search.remote_types)
                 blacklist_str = ", ".join(search.blacklist) if search.blacklist else None
                 message += (
+                    f"ID: {search.id}\n"
                     f"Title: {search.job_title}\n"
                     f"Location: {search.location}\n"
                     f"Job Types: {job_types}\n"
@@ -220,16 +221,37 @@ class TelegramBot:
         )
         return JOB_TYPES
     
+    def _parse_job_types(self, job_types_str: str) -> List[JobType]:
+        return [JobType.parse(jt.strip()) for jt in job_types_str.split(',') if jt.strip()]
+
+    def _parse_remote_types(self, remote_types_str: str) -> List[RemoteType]:
+        return [RemoteType.parse(rt.strip()) for rt in remote_types_str.split(',') if rt.strip()]
+
+    def _parse_blacklist(self, blacklist_str: str) -> List[str]:
+        return [s.strip() for s in blacklist_str.split(',') if s.strip()]
+
+    def _format_confirmation_message(self, title, location, job_types, remote_types, time_period, blacklist, search_id=None):
+        msg = ""
+        if search_id:
+            msg += f"Search ID: {search_id}\n"
+        msg += (
+            f"Job: {title}\n"
+            f"Location: {location}\n"
+            f"Type: {', '.join(jt.label for jt in job_types)}\n"
+            f"Remote: {', '.join(rt.label for rt in remote_types)}\n"
+            f"Check every: {time_period.display_name}\n"
+        )
+        if blacklist:
+            msg += f"Blacklist: {', '.join(blacklist)}\n"
+        return msg
+
     async def job_types(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Handle job types selection."""
         input_text = update.message.text.strip()
-        job_types = [t.strip() for t in input_text.split(',')]
         selected_types = []
-        for t in job_types:
-            try:
-                selected_types.append(JobType.parse(t))
-            except ValueError:
-                pass
+        try:
+            selected_types = self._parse_job_types(input_text)
+        except Exception:
+            pass
         context.user_data['job_types'] = selected_types
         if not context.user_data['job_types']:
             await update.message.reply_text(
@@ -246,15 +268,12 @@ class TelegramBot:
         return REMOTE_TYPES
     
     async def remote_types(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Handle remote types selection."""
         input_text = update.message.text.strip()
-        remote_types = [t.strip() for t in input_text.split(',')]
         selected_types = []
-        for t in remote_types:
-            try:
-                selected_types.append(RemoteType.parse(t))
-            except ValueError:
-                pass
+        try:
+            selected_types = self._parse_remote_types(input_text)
+        except Exception:
+            pass
         context.user_data['remote_types'] = selected_types
         if not context.user_data['remote_types']:
             await update.message.reply_text(
@@ -294,47 +313,38 @@ class TelegramBot:
         return BLACKLIST
     
     async def blacklist(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Handle blacklist input."""
         input_text = update.message.text.strip()
         if input_text == '-' or not input_text:
             context.user_data['blacklist'] = []
         else:
-            context.user_data['blacklist'] = [s.strip() for s in input_text.split(',') if s.strip()]
-        # Show confirmation message
-        await update.message.reply_text(
-            "Please confirm your job search by typing 'yes' or cancel by typing 'no'."
-        )
+            context.user_data['blacklist'] = self._parse_blacklist(input_text)
+        # Show job search summary and ask for confirmation
+        job_title = context.user_data['title']
+        location = context.user_data['location']
+        job_types = context.user_data['job_types']
+        remote_types = context.user_data['remote_types']
+        time_period = context.user_data['time_period']
+        blacklist = context.user_data.get('blacklist', [])
+        msg = self._format_confirmation_message(job_title, location, job_types, remote_types, time_period, blacklist)
+        msg += "\nPlease confirm your job search by typing 'yes' or cancel by typing 'no'."
+        await update.message.reply_text(msg)
         return CONFIRM
     
     async def confirm(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Handle confirmation of job search creation."""
         input_text = update.message.text.strip().lower()
-        
         if input_text == 'no':
             await update.message.reply_text("Job search creation cancelled.")
             return ConversationHandler.END
-            
         if input_text != 'yes':
             await update.message.reply_text("Please type 'yes' to confirm or 'no' to cancel.")
             return CONFIRM
-            
         try:
-            # Prepare summary
             job_title = context.user_data['title']
             location = context.user_data['location']
             job_types = context.user_data['job_types']
             remote_types = context.user_data['remote_types']
             time_period = context.user_data['time_period']
             blacklist = context.user_data.get('blacklist', [])
-            summary = f"{job_title};{location};"
-            summary += ",".join(jt.label for jt in job_types) + ";" if job_types else ";"
-            summary += ",".join(rt.label for rt in remote_types) + ";" if remote_types else ";"
-            summary += f"{time_period.display_name}"
-            if blacklist:
-                summary += f";{','.join(blacklist)}"
-            await update.message.reply_text(f"Saving new job search: {summary}")
-
-            # Create JobSearchIn instance and pass it directly
             job_search_in = JobSearchIn(
                 job_title=job_title,
                 location=location,
@@ -344,16 +354,14 @@ class TelegramBot:
                 user_id=update.effective_user.id,
                 blacklist=blacklist
             )
-
-            await self.job_search_manager.add_search(job_search_in)
-            await update.message.reply_text("Your job search has been created and will be processed shortly.")
-            
+            search_id = await self.job_search_manager.add_search(job_search_in)
+            msg = self._format_confirmation_message(job_title, location, job_types, remote_types, time_period, blacklist, search_id)
+            await update.message.reply_text(msg)
         except Exception as e:
             logger.error(f"Error creating job search: {e}")
             await update.message.reply_text(
                 "Sorry, there was an error creating your job search. Please try again."
             )
-            
         return ConversationHandler.END
     
     async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -495,17 +503,6 @@ class TelegramBot:
             logger.error(f"Error sending message: {e}")
 
     async def new_raw_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /newRaw command with raw input format.
-        
-        Format: /newRaw <job_title>;<location>;<job_type>;<remote_type>;<time_period>[;<blacklist>]
-        Example: /newRaw Software Engineer;Germany;Full-time;Remote;5 minutes;intern,senior,lead
-        
-        Available values:
-        - Job types: Full-time, Part-time, Contract, Temporary, Internship
-        - Remote types: On-site, Remote, Hybrid
-        - Time periods: 5 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours
-        - Blacklist: Optional, comma-separated words/phrases to exclude from job titles
-        """
         try:
             raw_input = update.message.text.split('/newRaw ')[1].strip()
             parts = raw_input.split(';')
@@ -513,7 +510,7 @@ class TelegramBot:
                 await update.message.reply_text(
                     "Invalid format. Please use:\n"
                     "/newRaw <job_title>;<location>;<job_type>;<remote_type>;<time_period>[;<blacklist>]\n\n"
-                    "Example: /newRaw Software Engineer;Germany;Full-time;Remote;5 minutes;intern,junior\n\n"
+                    "Example: /newRaw Software Engineer;Germany;Full-time,Part-time;Remote,Hybrid;5 minutes;intern,junior\n\n"
                     "Available values:\n"
                     "- Job types: Full-time, Part-time, Contract, Temporary, Internship\n"
                     "- Remote types: On-site, Remote, Hybrid\n"
@@ -524,38 +521,28 @@ class TelegramBot:
             title, location, job_type, remote_types, time_period = parts[:5]
             blacklist = []
             if len(parts) == 6:
-                blacklist = [s.strip() for s in parts[5].split(',') if s.strip()]
-            job_type_enum = JobType.parse(job_type.strip())
-            remote_type_enum = RemoteType.parse(remote_types.strip())
+                blacklist = self._parse_blacklist(parts[5])
+            job_type_enums = self._parse_job_types(job_type)
+            remote_type_enums = self._parse_remote_types(remote_types)
             time_period_enum = TimePeriod.parse(time_period.strip())
             job_search_in = JobSearchIn(
                 job_title=title.strip(),
                 location=location.strip(),
-                job_types=[job_type_enum],
-                remote_types=[remote_type_enum],
+                job_types=job_type_enums,
+                remote_types=remote_type_enums,
                 time_period=time_period_enum,
                 user_id=update.effective_user.id,
                 blacklist=blacklist
             )
             search_id = await self.job_search_manager.add_search(job_search_in)
-            msg = (
-                f"✅ New job search created!\n\n"
-                f"Job: {title}\n"
-                f"Location: {location}\n"
-                f"Type: {job_type_enum.label}\n"
-                f"Remote: {remote_type_enum.label}\n"
-                f"Check every: {time_period_enum.display_name}\n"
-            )
-            if blacklist:
-                msg += f"Blacklist: {', '.join(blacklist)}\n"
-            msg += f"\nSearch ID: {search_id}"
+            msg = self._format_confirmation_message(title, location, job_type_enums, remote_type_enums, time_period_enum, blacklist, search_id)
             await update.message.reply_text(msg)
         except ValueError as e:
             await update.message.reply_text(
                 f"❌ Error: {str(e)}\n\n"
                 "Please use the correct format:\n"
-                "/newRaw <job_title>;<location>;<job_type>;<remote_type>;<time_period>[;<blacklist>]\n\n"
-                "Example: /newRaw Software Engineer;Germany;Full-time;Remote;5 minutes;intern,senior,lead\n\n"
+                "/newRaw <job_title>;<location>;<job_type(s)>;<remote_type(s)>;<time_period>[;<blacklist>]\n\n"
+                "Example: /newRaw Software Engineer;Germany;Full-time,Part-time;Remote,Hybrid;5 minutes;intern,junior,sap\n\n"
                 "Available values:\n"
                 "- Job types: Full-time, Part-time, Contract, Temporary, Internship\n"
                 "- Remote types: On-site, Remote, Hybrid\n"
@@ -565,5 +552,12 @@ class TelegramBot:
         except Exception as e:
             await update.message.reply_text(
                 f"❌ Error creating job search: {str(e)}\n\n"
-                "Please try again or contact support if the issue persists."
+                "Please use the correct format:\n"
+                "/newRaw <job_title>;<location>;<job_type(s)>;<remote_type(s)>;<time_period>[;<blacklist>]\n\n"
+                "Example: /newRaw Software Engineer;Germany;Full-time,Part-time;Remote,Hybrid;5 minutes;intern,junior,sap\n\n"
+                "Available values:\n"
+                "- Job types: Full-time, Part-time, Contract, Temporary, Internship\n"
+                "- Remote types: On-site, Remote, Hybrid\n"
+                "- Time periods: 5 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours\n"
+                "- Blacklist: Optional, comma-separated words/phrases to exclude from job titles"
             ) 
