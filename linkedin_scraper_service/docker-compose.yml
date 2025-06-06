@@ -5,8 +5,6 @@ services:
     build:
       context: ..
       dockerfile: linkedin_scraper_service/Dockerfile
-      platforms:
-        - linux/amd64
     image: ${MY_IMAGE}
     env_file:
       - .env
@@ -17,4 +15,5 @@ services:
       - ../shared:/home/scraper/app/shared:ro
     restart: unless-stopped
     ports:
-      - "8002:8002" 
+      - "8002:8002"
+    platform: linux/amd64 

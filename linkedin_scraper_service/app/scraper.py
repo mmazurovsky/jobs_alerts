@@ -431,16 +431,10 @@ class LinkedInScraperGuest:
         """Search for jobs with a timeout to prevent hanging."""
         try:
             # Set a timeout for the entire search operation (5 minutes)
-            return await asyncio.wait_for(
-                self._search_jobs_internal(
+            return await self._search_jobs_internal(
                     keywords, location, max_pages, job_types, 
                     remote_types, time_period, max_jobs, blacklist
-                ),
-                timeout=300  # 5 minutes
             )
-        except asyncio.TimeoutError:
-            self.logger.error(f"Search for '{keywords}' timed out after 5 minutes")
-            return []
         except Exception as e:
             self.logger.error(f"Search for '{keywords}' failed: {e}")
             return []

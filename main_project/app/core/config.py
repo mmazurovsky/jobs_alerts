@@ -37,30 +37,7 @@ class Config:
         else:
             logger.info(f"Loading .env file from: {env_path}")
             load_dotenv(env_path, override=True)
-            
-        # LinkedIn credentials
-        self.linkedin_email = os.getenv('LINKEDIN_EMAIL')
-        if not self.linkedin_email:
-            logger.error(f"LINKEDIN_EMAIL not found in environment variables")
-            exit()
-        else:
-            logger.info(f"Loaded LINKEDIN_EMAIL: {self.linkedin_email}")
-            
-        self.linkedin_password = os.getenv('LINKEDIN_PASSWORD')
-        if not self.linkedin_password:
-            logger.error("LINKEDIN_PASSWORD not found in environment variables")
-        else:
-            logger.info("Loaded LINKEDIN_PASSWORD: [MASKED]")
-        
-        # Scraping settings
-        self.max_jobs_per_search = int(os.getenv('MAX_JOBS_PER_SEARCH', '100'))
-        self.search_interval_minutes = int(os.getenv('SEARCH_INTERVAL_MINUTES', '60'))
-        self.save_path = Path(os.getenv('SAVE_PATH', './data/jobs'))
-        
-        # Notification settings
-        self.enable_notifications = os.getenv('ENABLE_NOTIFICATIONS', 'false').lower() == 'true'
-        self.notification_email = os.getenv('NOTIFICATION_EMAIL')
-        
+                                
         # Telegram bot settings
         self.telegram_bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
         if not self.telegram_bot_token:

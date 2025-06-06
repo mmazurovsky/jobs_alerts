@@ -105,14 +105,12 @@ class JobSearchScheduler:
         """Check a single job search for new listings."""
         try:
             user_id = job_search.user_id
-            max_jobs = 100
             params = SearchJobsParams(
                 keywords=job_search.job_title,
                 location=job_search.location,
                 job_type=[jt.name for jt in job_search.job_types] if job_search.job_types else [],
                 remote_type=[rt.name for rt in job_search.remote_types] if job_search.remote_types else [],
                 time_period=job_search.time_period.name if job_search.time_period else None,
-                max_results=max_jobs,
             ).model_dump(exclude_none=True)
             jobs = await search_jobs_via_scraper(params)
             # jobs is expected to be a list of dicts; adapt as needed
