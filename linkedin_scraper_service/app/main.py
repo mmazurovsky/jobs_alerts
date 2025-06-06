@@ -1,9 +1,15 @@
+import logging
+logging.basicConfig(level=logging.INFO)
+logging.info("main.py module imported and executed.")
+
 from fastapi import FastAPI, Query, HTTPException
 from app.scraper import LinkedInScraperGuest
 from shared.data import SearchJobsParams, TimePeriod, JobType, RemoteType
 from typing import Optional
 
 app = FastAPI()
+
+logger = logging.getLogger("search_jobs_endpoint")
 
 @app.get("/search_jobs")
 async def search_jobs(
@@ -12,8 +18,8 @@ async def search_jobs(
     time_period: str = Query(...),
     job_type: list[str] = Query(...),
     remote_type: list[str] = Query(...),
-    max_results: Optional[int] = Query(None, ge=1)
 ):
+    logger.info(f"/search_jobs called with: keywords={keywords}, location={location}, time_period={time_period}, job_type={job_type}, remote_type={remote_type}")
     try:
         params = SearchJobsParams(
             keywords=keywords,
@@ -21,19 +27,18 @@ async def search_jobs(
             time_period=time_period,
             job_type=job_type,
             remote_type=remote_type,
-            max_results=max_results
         )
     except Exception as e:
+        logger.error(f"Failed to parse SearchJobsParams: {e}")
         raise HTTPException(status_code=422, detail=str(e))
 
-    scraper = LinkedInScraperGuest(name="api_guest")
+    scraper = await LinkedInScraperGuest.create_new_session(name="api_guest")
     results = await scraper.search_jobs(
         keywords=params.keywords,
         location=params.location,
         time_period=TimePeriod.parse(params.time_period),
         job_types=[JobType.parse(jt) for jt in params.job_type] if isinstance(params.job_type, list) else [JobType.parse(params.job_type)],
         remote_types=[RemoteType.parse(rt) for rt in params.remote_type] if isinstance(params.remote_type, list) else [RemoteType.parse(params.remote_type)],
-        max_results=params.max_results
     )
     return results
 

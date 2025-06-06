@@ -85,7 +85,6 @@ RUN python -m playwright install
 
 # Copy application code and set proper ownership
 COPY linkedin_scraper_service/app/ ./app/
-COPY --chown=scraper:scraper data/ ./data/
 RUN mkdir -p logs && chown -R scraper:scraper /home/scraper/app
 
 # Switch to non-root user

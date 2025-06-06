@@ -11,7 +11,7 @@ import logging
 
 from apscheduler.triggers.cron import CronTrigger
 
-from src.utils.other_util import enable_enum_name_deserialization
+from shared.util.other_util import enable_enum_name_deserialization
 
 logger = logging.getLogger(__name__)
 
@@ -267,7 +267,6 @@ class SearchJobsParams(BaseModel):
     time_period: str = Field(..., min_length=1)
     job_type: list[str] = Field(..., min_length=1)
     remote_type: list[str] = Field(..., min_length=1)
-    max_results: Optional[int] = Field(None, ge=1)
 
     @classmethod
     def __get_validators__(cls):
