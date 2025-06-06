@@ -260,3 +260,28 @@ class SentJobOut(CustomBaseModel):
     user_id: int
     job_url: str
     sent_at: datetime
+
+class SearchJobsParams(BaseModel):
+    keywords: str = Field(..., min_length=1)
+    location: str = Field(..., min_length=1)
+    time_period: str = Field(..., min_length=1)
+    job_type: list[str] = Field(..., min_length=1)
+    remote_type: list[str] = Field(..., min_length=1)
+    max_results: Optional[int] = Field(None, ge=1)
+
+    @classmethod
+    def __get_validators__(cls):
+        yield cls.validate_job_type
+        yield cls.validate_remote_type
+
+    @classmethod
+    def validate_job_type(cls, v):
+        if isinstance(v, str):
+            return [v]
+        return v
+
+    @classmethod
+    def validate_remote_type(cls, v):
+        if isinstance(v, str):
+            return [v]
+        return v

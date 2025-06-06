@@ -1,10 +1,10 @@
 version: '3.8'
 
 services:
-  jobs_alerts:
+  linkedin_scraper_service:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: linkedin_scraper_service/Dockerfile
       platforms:
         - linux/amd64
     image: ${MY_IMAGE}
@@ -14,6 +14,7 @@ services:
       - ./logs:/home/scraper/app/logs
       - ./screenshots:/home/scraper/app/screenshots
       - /var/run/docker.sock:/var/run/docker.sock
+      - ../shared:/home/scraper/app/shared:ro
     restart: unless-stopped
     ports:
-      - "8080:8080" 
+      - "8002:8002" 

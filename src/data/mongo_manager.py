@@ -1,1 +1,0 @@
-# Deprecated: All MongoDB logic moved to job_search_store.py, sent_jobs_store.py, and mongo_connection.py 

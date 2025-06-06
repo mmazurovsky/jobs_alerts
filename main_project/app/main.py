@@ -9,16 +9,16 @@ import sys
 from typing import Optional
 from pathlib import Path
 import threading
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 import uvicorn
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
 load_dotenv()
 
-from src.core.container import get_container
-from src.core.linkedin_scraper import LinkedInScraper
-from src.utils.logging_config import setup_logging
+from core.container import get_container
+from utils.logging_config import setup_logging
+from app.scraper_client import search_jobs_via_scraper, check_proxy_connection_via_scraper
 
 # Configure logging to file and console
 setup_logging(log_file=Path('logs/app.log'))
@@ -43,13 +43,17 @@ async def handle_shutdown(signum: int, frame: Optional[object]) -> None:
     sys.exit(0)
 
 def start_health_server():
-    app = FastAPI()
+    app = FastAPI(title="Main Project API", description="Jobs Alerts Main Service")
+
+    @app.get("/")
+    async def root():
+        return {"message": "Jobs Alerts Main Service", "status": "running"}
 
     @app.get("/healthz")
     async def health():
         return {"status": "ok"}
 
-    uvicorn.run(app, host="0.0.0.0", port=8080, log_level="warning")
+    uvicorn.run(app, host="0.0.0.0", port=8001, log_level="warning")
 
 async def main() -> None:
     """Main application entry point."""
@@ -59,14 +63,15 @@ async def main() -> None:
         container = get_container()
         await container.initialize()
 
-        # Proxy connection check
-        from src.core.linkedin_scraper_guest import LinkedInScraperGuest
-        test_scraper = LinkedInScraperGuest(name="proxy_test", stream_manager=container.stream_manager)
-        proxy_ok = await test_scraper.check_proxy_connection()
-        if not proxy_ok:
-            logger.error("Proxy connection test failed. Check your proxy settings.")
-        else:
-            logger.info("Proxy connection test succeeded.")
+        # Proxy connection check via HTTP
+        try:
+            proxy_result = await check_proxy_connection_via_scraper()
+            if proxy_result.get("success"):
+                logger.info("Proxy connection test succeeded via scraper service.")
+            else:
+                logger.error("Proxy connection test failed via scraper service.")
+        except Exception as e:
+            logger.error(f"Failed to check proxy connection via scraper service: {e}")
         
         # Set up signal handlers
         signal.signal(signal.SIGINT, lambda s, f: asyncio.create_task(handle_shutdown(s, f)))
