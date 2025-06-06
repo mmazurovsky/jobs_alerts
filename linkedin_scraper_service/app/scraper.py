@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import List, Optional, Dict
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext
-from src.data.data import JobType, RemoteType, TimePeriod, ShortJobListing, StreamEvent, StreamType
+from shared.data import JobType, RemoteType, TimePeriod, ShortJobListing, StreamEvent, StreamType
 import time
 import random
 from urllib.parse import urlparse, urlunparse

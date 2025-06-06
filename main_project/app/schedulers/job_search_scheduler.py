@@ -12,10 +12,10 @@ import re
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from src.data.data import JobSearchOut, StreamManager, TimePeriod, JobListing, StreamType, StreamEvent
-from src.core.linkedin_scraper_guest import LinkedInScraperGuest
-from src.core.stores.sent_jobs_store import SentJobsStore
-from src.data.mongo_connection import MongoConnection
+from shared.data import JobSearchOut, StreamManager, TimePeriod, JobListing, StreamType, StreamEvent, SearchJobsParams
+from core.stores.sent_jobs_store import SentJobsStore
+from core.mongo_connection import MongoConnection
+from app.scraper_client import search_jobs_via_scraper
 
 logger = logging.getLogger(__name__)
 
@@ -104,63 +104,40 @@ class JobSearchScheduler:
     async def _search_jobs_and_send_write_message_event(self, job_search: JobSearchOut):
         """Check a single job search for new listings."""
         try:
-            # Create a new browser session for this job search
-            name = None
-            if getattr(job_search, 'job_title', None) and getattr(job_search, 'location', None):
-                name = f"{job_search.job_title} - {job_search.location}"
-            elif getattr(job_search, 'job_title', None):
-                name = job_search.job_title
-            elif getattr(job_search, 'location', None):
-                name = job_search.location
-            
-            scraper = await LinkedInScraperGuest.create_new_session(
-                name=name, 
-                stream_manager=self._stream_manager,
-            )
-            
             user_id = job_search.user_id
             max_jobs = 100
-            jobs = await scraper.search_jobs(
+            params = SearchJobsParams(
                 keywords=job_search.job_title,
                 location=job_search.location,
-                job_types=job_search.job_types,
-                remote_types=job_search.remote_types,
-                time_period=job_search.time_period,
-                max_jobs=max_jobs,
-                blacklist=job_search.blacklist,
-            )
-            
+                job_type=[jt.name for jt in job_search.job_types] if job_search.job_types else [],
+                remote_type=[rt.name for rt in job_search.remote_types] if job_search.remote_types else [],
+                time_period=job_search.time_period.name if job_search.time_period else None,
+                max_results=max_jobs,
+            ).model_dump(exclude_none=True)
+            jobs = await search_jobs_via_scraper(params)
+            # jobs is expected to be a list of dicts; adapt as needed
             if jobs:
-                # Fetch sent jobs for user
                 sent_jobs = await self._sent_jobs_store.get_sent_jobs_for_user(user_id)
                 sent_job_urls = {job.job_url for job in sent_jobs}
-                new_jobs = [job for job in jobs if job.link not in sent_job_urls]
-                
+                new_jobs = [job for job in jobs if job.get("link") not in sent_job_urls]
                 if new_jobs:
-                    # Format and send job listings
                     message = (
                         f"🔔 New job listings found for: {job_search.job_title} in {job_search.location}\n\n"
                     )
                     for job in new_jobs:
                         message += (
-                            f"🏢 {job.company}\n"
-                            f"💼 {job.title}\n"
-                            f"📍 {job.location}\n"
-                            f"⏰ {job.created_ago}\n"
-                            f"🔗 {job.link}\n\n"
+                            f"🏢 {job.get('company')}\n"
+                            f"💼 {job.get('title')}\n"
+                            f"📍 {job.get('location')}\n"
+                            f"⏰ {job.get('created_ago')}\n"
+                            f"🔗 {job.get('link')}\n\n"
                         )
-                    
-                    # Mark jobs as sent
                     for job in new_jobs:
-                        await self._sent_jobs_store.save_sent_job(user_id, job.link)
-                    
-                    # Create message data instance
+                        await self._sent_jobs_store.save_sent_job(user_id, job.get("link"))
                     message_data = {
                         "user_id": user_id,
                         "message": message
                     }
-                    
-                    # Send message through stream manager
                     self._stream_manager.publish(StreamEvent(
                         type=StreamType.SEND_MESSAGE,
                         data=message_data,
@@ -168,21 +145,15 @@ class JobSearchScheduler:
                     ))
                 else:
                     logger.info(f"No new jobs found for {job_search.job_title} in {job_search.location}")
-            
-            # Close the browser session
-            await scraper.close()
         except asyncio.CancelledError:
             logger.info(f"Job search for user {job_search.user_id} was cancelled (likely due to shutdown). No error.")
-            # Do not send user message, just exit
             return
         except Exception as e:
             logger.error(f"Error checking job search: {e}")
-            # Create error message data instance
             message_data = {
                 "user_id": job_search.user_id,
                 "message": "Sorry, there was an error checking for new jobs. Please try again later."
             }
-            # Send error message through stream manager
             self._stream_manager.publish(StreamEvent(
                 type=StreamType.SEND_MESSAGE,
                 data=message_data,

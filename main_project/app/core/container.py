@@ -8,7 +8,7 @@ from src.bot.telegram_bot import TelegramBot
 from src.core.config import Config
 from src.data.mongo_connection import MongoConnection
 from src.schedulers.job_search_scheduler import JobSearchScheduler
-from src.user.job_search_manager import JobSearchManager
+from main_project.app.core.job_search_manager import JobSearchManager
 from src.data.data import StreamManager
 from src.core.stores.job_search_store import JobSearchStore
 from src.core.stores.sent_jobs_store import SentJobsStore

@@ -18,13 +18,12 @@ from datetime import datetime
 import asyncio
 
 from src.core.config import Config
-from src.core.linkedin_scraper import LinkedInScraper
 from src.data.data import (
     JobSearchOut, JobListing, JobSearchIn, JobType, RemoteType, TimePeriod,
     StreamType, StreamEvent, StreamManager, JobSearchRemove,
     job_types_list, remote_types_list, time_periods_list
 )
-from src.user.job_search_manager import JobSearchManager
+from main_project.app.core.job_search_manager import JobSearchManager
 
 logger = logging.getLogger(__name__)
 

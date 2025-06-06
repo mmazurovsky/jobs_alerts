@@ -1,12 +1,17 @@
-only run during the day
-fix cron for jobs
-add queues for jobs
+
+
 move scraper to another service and provide api
 secure scraper api
 scale scraper service
+
+add queues for jobs
+
 add premium
 hide some options behind premium
 add only 7 days trial period with limited features
+
+only run during the day
+fix cron for jobs
 
 
 
