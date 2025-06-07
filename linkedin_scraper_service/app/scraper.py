@@ -510,7 +510,7 @@ class LinkedInScraperGuest:
                 # Return empty list if CET time is between 00:30 and 06:30
                 berlin_tz = pytz.timezone('Europe/Berlin')
                 now_berlin = datetime.datetime.now(berlin_tz)
-                if (now_berlin.hour == 0 and now_berlin.minute >= 30) or (0 < now_berlin.hour < 6) or (now_berlin.hour == 6 and now_berlin.minute < 30):
+                if (now_berlin.hour == 1 and now_berlin.minute >= 30) or (1 < now_berlin.hour < 6) or (now_berlin.hour == 6 and now_berlin.minute < 30):
                     self.logger.info("Current time in CET is between 00:30 and 06:30. Skipping job search.")
                     return []
 
@@ -590,7 +590,27 @@ class LinkedInScraperGuest:
 
                 # Check for no results again after applying filters
                 self.logger.info("Checking for no-results section after applying filters...")
-                no_results_section = await self.page.query_selector('section.no-results')
+                no_results_section = None
+                max_retries = 3
+                for attempt_retry in range(1, max_retries + 1):
+                    try:
+                        await self._random_delay(2, 5)
+                        no_results_section = await self.page.query_selector('section.no-results')
+                        break
+                    except Exception as e:
+                        self.logger.error(f"Attempt {attempt_retry}: Error checking for no-results section: {e}")
+                        if attempt_retry < max_retries:
+                            await asyncio.sleep(1.5 * attempt_retry)
+                        else:
+                            # Log page state before raising
+                            try:
+                                current_url = self.page.url
+                                html_snippet = await self.page.content()
+                                self.logger.error(f"Page state on failure (URL): {current_url}")
+                                self.logger.error(f"Page state on failure (HTML snippet): {html_snippet[:2000]}")
+                            except Exception as log_e:
+                                self.logger.error(f"Failed to log page state: {log_e}")
+                            raise
                 if no_results_section:
                     self.logger.info("No jobs found after applying filters - detected 'no-results' section")
                     return []
