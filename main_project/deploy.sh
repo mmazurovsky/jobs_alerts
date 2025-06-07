@@ -10,9 +10,6 @@ export DOCKER_BUILDKIT=1
 
 echo "Building and pushing main_project from monorepo root..."
 
-# Change to monorepo root
-cd ..
-
 # Build with cache from the latest image
 docker compose build --build-arg BUILDKIT_INLINE_CACHE=1 main_project
 

@@ -4,6 +4,8 @@ move scraper to another service and provide api
 secure scraper api
 scale scraper service
 
+if cant delete return that it was not deleted instead of success
+
 add queues for jobs
 
 add premium

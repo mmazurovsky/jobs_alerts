@@ -1,5 +1,6 @@
 fastapi==0.115.12
 uvicorn==0.34.3
+uvicorn[standard]
 pydantic>=2.0.0
 playwright==1.42.0
 playwright-stealth

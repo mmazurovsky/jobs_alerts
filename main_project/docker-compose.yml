@@ -5,16 +5,16 @@ services:
     build:
       context: ..
       dockerfile: main_project/Dockerfile
-      platforms:
-        - linux/amd64
     image: ${MY_IMAGE}
     env_file:
       - .env
     volumes:
-      - ./logs:/app/logs
-      - ./screenshots:/app/screenshots
+      - ./logs:/home/scraper/app/logs
+      - ./screenshots:/home/scraper/app/screenshots
       - /var/run/docker.sock:/var/run/docker.sock
-      - ../shared:/app/shared:ro
+      - ../shared:/home/scraper/app/shared:ro
+      - ./tmp:/tmp
     restart: unless-stopped
     ports:
-      - "8001:8001" 
+      - "8001:8001"
+    platform: linux/amd64 
