@@ -32,7 +32,7 @@ async def search_jobs(
         logger.error(f"Failed to parse SearchJobsParams: {e}")
         raise HTTPException(status_code=422, detail=str(e))
 
-    scraper = await LinkedInScraperGuest.create_new_session(name="api_guest")
+    scraper = await LinkedInScraperGuest.create_new_session()
     results = await scraper.search_jobs(
         keywords=params.keywords,
         location=params.location,

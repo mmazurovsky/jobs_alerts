@@ -36,7 +36,7 @@ class LinkedInScraperGuest:
         {'width': 1680, 'height': 1050},
     ]
     
-    def __init__(self, name: Optional[str] = None, stream_manager=None, proxy_config: Optional[Dict[str, str]] = None):
+    def __init__(self, name: Optional[str] = None, proxy_config: Optional[Dict[str, str]] = None):
         self.logger = logging.getLogger(f"src.core.linkedin_scraper_guest{f'.{name}' if name else ''}")
         self.name = name or "guest"
         self.browser: Optional[Browser] = None
@@ -46,7 +46,6 @@ class LinkedInScraperGuest:
         self._last_log_time = time.time()
         self._watchdog_task = None
         self._patch_logger()
-        self.stream_manager = stream_manager
         self.proxy_config = proxy_config or self._get_default_proxy_config()
         self._recent_logs = deque(maxlen=50)
         class MemoryLogHandler(logging.Handler):
@@ -394,6 +393,7 @@ class LinkedInScraperGuest:
     
     async def _cleanup(self):
         """Clean up browser resources."""
+        self.logger.info("Cleaning up browser resources...")
         try:
             if hasattr(self, 'page') and self.page:
                 await self.page.close()
@@ -411,9 +411,9 @@ class LinkedInScraperGuest:
         self.logger.info("Closed Playwright browser for guest scraping.")
 
     @classmethod
-    async def create_new_session(cls, *args, stream_manager=None, proxy_config=None, **kwargs):
+    async def create_new_session(cls, *args, proxy_config=None, **kwargs):
         """Create a new browser session for a job search."""
-        instance = cls(*args, stream_manager=stream_manager, proxy_config=proxy_config, **kwargs)
+        instance = cls(*args, proxy_config=proxy_config, **kwargs)
         await instance._initialize()
         return instance
 
@@ -651,6 +651,7 @@ class LinkedInScraperGuest:
                         include_logs=True
                     )
                     return []
+                self.logger.error(f"Navigation error: {nav_error}, restarting session...")
                 await self._restart_session()
                 await asyncio.sleep(2 * attempt)
                 attempt += 1
@@ -910,7 +911,7 @@ class LinkedInScraperGuest:
             self.logger.warning(f"Failed to scroll job results list: {e}")
 
     async def _post_watchdog_screenshot(self, message: str, include_logs: bool = False):
-        if not self.page or not self.stream_manager:
+        if not self.page:
             return
         try:
             screenshots_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'screenshots')
@@ -931,7 +932,7 @@ class LinkedInScraperGuest:
                 data=event_data,
                 source="linkedin_scraper_guest"
             )
-            self.stream_manager.publish(event)
+            # TODO: add logging of screenshot
         except Exception as e:
             self.logger.error(f"Failed to post watchdog screenshot: {e}")
 
