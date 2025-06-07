@@ -64,6 +64,7 @@ class TimePeriod:
 TimePeriod("5 minutes", 300, CronTrigger(minute='0,5,10,15,20,25,30,35,40,45,50,55'))
 TimePeriod("10 minutes", 600, CronTrigger(minute='0,10,20,30,40,50'))
 TimePeriod("15 minutes", 900, CronTrigger(minute='0,15,30,45'))
+TimePeriod("20 minutes", 1200, CronTrigger(minute='0,20,40'))
 TimePeriod("30 minutes", 1800, CronTrigger(minute='0,30'))
 TimePeriod("1 hour", 3600, CronTrigger(minute='0'))
 TimePeriod("4 hours", 14400, CronTrigger(hour='0,4,8,12,16,20', minute='0'))
