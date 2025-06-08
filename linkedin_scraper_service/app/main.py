@@ -3,7 +3,7 @@ logging.basicConfig(level=logging.INFO)
 logging.info("main.py module imported and executed.")
 
 from fastapi import FastAPI, Query, HTTPException
-from app.scraper import LinkedInScraperGuest
+from linkedin_scraper_service.app.scraper import LinkedInScraperGuest
 from shared.data import SearchJobsParams, TimePeriod, JobType, RemoteType
 from typing import Optional
 

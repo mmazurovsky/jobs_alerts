@@ -4,14 +4,14 @@ Dependency injection container for the application.
 import logging
 from typing import Optional
 
-from src.bot.telegram_bot import TelegramBot
-from src.core.config import Config
-from src.data.mongo_connection import MongoConnection
-from src.schedulers.job_search_scheduler import JobSearchScheduler
+from main_project.app.bot.telegram_bot import TelegramBot
+from main_project.app.core.config import Config
+from main_project.app.core.mongo_connection import MongoConnection
+from main_project.app.schedulers.job_search_scheduler import JobSearchScheduler
 from main_project.app.core.job_search_manager import JobSearchManager
-from src.data.data import StreamManager
-from src.core.stores.job_search_store import JobSearchStore
-from src.core.stores.sent_jobs_store import SentJobsStore
+from shared.data import StreamManager
+from main_project.app.core.stores.job_search_store import JobSearchStore
+from main_project.app.core.stores.sent_jobs_store import SentJobsStore
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ class Container:
         self._job_search_store: Optional[JobSearchStore] = None
         self._sent_jobs_store: Optional[SentJobsStore] = None
         self._job_search_manager: Optional[JobSearchManager] = None
-        self._telegram_bot: Optional[TelegramBot] = None
+        self._telegram_bot: Optional['TelegramBot'] = None
         self._scheduler: Optional[JobSearchScheduler] = None
         self._stream_manager: Optional[StreamManager] = None
     
@@ -62,7 +62,7 @@ class Container:
         return self._job_search_manager
     
     @property
-    def telegram_bot(self) -> TelegramBot:
+    def telegram_bot(self) -> 'TelegramBot':
         """Get the Telegram bot instance."""
         if not self._telegram_bot:
             token = self.config.telegram_bot_token

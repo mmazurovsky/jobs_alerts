@@ -12,6 +12,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ../shared:/home/scraper/app/shared:ro
       - ./tmp:/tmp  # <- Add this line
+      - ../:/app
     restart: unless-stopped
     ports:
       - "8002:8002"

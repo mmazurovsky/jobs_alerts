@@ -17,13 +17,12 @@ from telegram.constants import ParseMode
 from datetime import datetime
 import asyncio
 
-from src.core.config import Config
-from src.data.data import (
+from shared.data import (
     JobSearchOut, JobListing, JobSearchIn, JobType, RemoteType, TimePeriod,
     StreamType, StreamEvent, StreamManager, JobSearchRemove,
     job_types_list, remote_types_list, time_periods_list
 )
-from main_project.app.core.job_search_manager import JobSearchManager
+from core.job_search_manager import JobSearchManager
 
 logger = logging.getLogger(__name__)
 
@@ -122,9 +121,7 @@ class TelegramBot:
         """List all job searches for the user."""
         self._clear_conversation_state(context)
         try:
-            from src.core.container import get_container
-            container = get_container()
-            searches: List[JobSearchOut] = await container.job_search_manager.get_user_searches(update.effective_user.id)
+            searches: List[JobSearchOut] = await self.job_search_manager.get_user_searches(update.effective_user.id)
             
             if not searches:
                 await update.message.reply_text("You don't have any job searches yet.")
