@@ -3,8 +3,8 @@ Sent jobs MongoDB store methods.
 """
 from typing import List
 from pymongo.errors import ServerSelectionTimeoutError
-from src.data.data import SentJobOut
-from src.data.mongo_connection import MongoConnection
+from shared.data import SentJobOut
+from main_project.app.core.mongo_connection import MongoConnection
 from datetime import datetime, timezone
 import logging
 

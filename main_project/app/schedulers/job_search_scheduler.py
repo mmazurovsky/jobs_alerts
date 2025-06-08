@@ -13,9 +13,9 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from shared.data import JobSearchOut, StreamManager, TimePeriod, JobListing, StreamType, StreamEvent, SearchJobsParams
-from core.stores.sent_jobs_store import SentJobsStore
-from core.mongo_connection import MongoConnection
-from app.scraper_client import search_jobs_via_scraper
+from main_project.app.core.stores.sent_jobs_store import SentJobsStore
+from main_project.app.core.mongo_connection import MongoConnection
+from main_project.app.scraper_client import search_jobs_via_scraper
 
 logger = logging.getLogger(__name__)
 

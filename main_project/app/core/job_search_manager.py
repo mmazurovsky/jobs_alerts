@@ -4,11 +4,11 @@ Job search manager for handling user job searches.
 import logging
 from typing import Dict, List, Optional
 import uuid
-from src.data.data import JobSearchOut, JobSearchIn, JobSearchRemove, JobType, RemoteType, StreamManager, TimePeriod, StreamType, StreamEvent
-from src.core.stores.job_search_store import JobSearchStore
+from shared.data import JobSearchOut, JobSearchIn, JobSearchRemove, JobType, RemoteType, StreamManager, TimePeriod, StreamType, StreamEvent
+from main_project.app.core.stores.job_search_store import JobSearchStore
 import asyncio
 
-from src.schedulers.job_search_scheduler import JobSearchScheduler
+from main_project.app.schedulers.job_search_scheduler import JobSearchScheduler
 
 logger = logging.getLogger(__name__)
 

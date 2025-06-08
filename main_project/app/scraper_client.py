@@ -16,4 +16,4 @@ async def check_proxy_connection_via_scraper() -> dict[str, Any]:
     async with httpx.AsyncClient() as client:
         response = await client.get(f"{SCRAPER_BASE_URL}/check_proxy_connection")
         response.raise_for_status()
-        return response.json() 
+        return response.json()

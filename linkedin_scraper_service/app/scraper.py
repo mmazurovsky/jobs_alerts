@@ -37,7 +37,7 @@ class LinkedInScraperGuest:
     ]
     
     def __init__(self, name: Optional[str] = None, proxy_config: Optional[Dict[str, str]] = None):
-        self.logger = logging.getLogger(f"src.core.linkedin_scraper_guest{f'.{name}' if name else ''}")
+        self.logger = logging.getLogger(f"linkedin_scraper_guest{f'.{name}' if name else ''}")
         self.name = name or "guest"
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None

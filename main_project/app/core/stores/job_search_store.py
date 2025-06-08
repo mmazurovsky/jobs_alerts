@@ -3,8 +3,8 @@ Job search MongoDB store methods.
 """
 from typing import List
 from pymongo.errors import ServerSelectionTimeoutError
-from src.data.data import JobSearchOut
-from src.data.mongo_connection import MongoConnection
+from shared.data import JobSearchOut
+from main_project.app.core.mongo_connection import MongoConnection
 import logging
 
 logger = logging.getLogger(__name__)

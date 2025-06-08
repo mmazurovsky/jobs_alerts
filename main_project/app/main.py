@@ -11,14 +11,11 @@ from pathlib import Path
 import threading
 from fastapi import FastAPI, Query
 import uvicorn
-
-# Load environment variables from .env file
 from dotenv import load_dotenv
-load_dotenv()
 
-from core.container import get_container
-from utils.logging_config import setup_logging
-from app.scraper_client import search_jobs_via_scraper, check_proxy_connection_via_scraper
+from main_project.app.core.container import get_container
+from main_project.app.utils.logging_config import setup_logging
+from main_project.app.scraper_client import search_jobs_via_scraper, check_proxy_connection_via_scraper
 
 # Configure logging to file and console
 setup_logging(log_file=Path('logs/app.log'))
@@ -35,25 +32,23 @@ if log_level != 'DEBUG':
 
 logger = logging.getLogger(__name__)
 
+# Define FastAPI app instance for ASGI
+app = FastAPI(title="Main Project API", description="Jobs Alerts Main Service")
+
+@app.get("/")
+async def root():
+    return {"message": "Jobs Alerts Main Service", "status": "running"}
+
+@app.get("/healthz")
+async def health():
+    return {"status": "ok"}
+
 async def handle_shutdown(signum: int, frame: Optional[object]) -> None:
     """Handle shutdown signals."""
     logger.info(f"Received signal {signum}, shutting down...")
     container = get_container()
     await container.shutdown()
     sys.exit(0)
-
-def start_health_server():
-    app = FastAPI(title="Main Project API", description="Jobs Alerts Main Service")
-
-    @app.get("/")
-    async def root():
-        return {"message": "Jobs Alerts Main Service", "status": "running"}
-
-    @app.get("/healthz")
-    async def health():
-        return {"status": "ok"}
-
-    uvicorn.run(app, host="0.0.0.0", port=8001, log_level="warning")
 
 async def main() -> None:
     """Main application entry point."""
@@ -76,9 +71,6 @@ async def main() -> None:
         # Set up signal handlers
         signal.signal(signal.SIGINT, lambda s, f: asyncio.create_task(handle_shutdown(s, f)))
         signal.signal(signal.SIGTERM, lambda s, f: asyncio.create_task(handle_shutdown(s, f)))
-        
-        # Start health server in background
-        threading.Thread(target=start_health_server, daemon=True).start()
         
         # Keep the application running
         while True:
