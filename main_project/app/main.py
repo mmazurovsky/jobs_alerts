@@ -11,7 +11,6 @@ from pathlib import Path
 import threading
 from fastapi import FastAPI, Query
 import uvicorn
-from dotenv import load_dotenv
 
 from main_project.app.core.container import get_container
 from main_project.app.utils.logging_config import setup_logging
@@ -34,6 +33,25 @@ logger = logging.getLogger(__name__)
 
 # Define FastAPI app instance for ASGI
 app = FastAPI(title="Main Project API", description="Jobs Alerts Main Service")
+
+@app.on_event("startup")
+async def on_startup():
+    container = get_container()
+    await container.initialize()
+    # Optionally: check proxy connection here if you want
+    try:
+        proxy_result = await check_proxy_connection_via_scraper()
+        if proxy_result.get("success"):
+            logger.info("Proxy connection test succeeded via scraper service.")
+        else:
+            logger.error("Proxy connection test failed via scraper service.")
+    except Exception as e:
+        logger.error(f"Failed to check proxy connection via scraper service", exc_info=True)
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    container = get_container()
+    await container.shutdown()
 
 @app.get("/")
 async def root():
@@ -66,7 +84,7 @@ async def main() -> None:
             else:
                 logger.error("Proxy connection test failed via scraper service.")
         except Exception as e:
-            logger.error(f"Failed to check proxy connection via scraper service: {e}")
+            logger.error(f"Failed to check proxy connection via scraper service", exc_info=True)
         
         # Set up signal handlers
         signal.signal(signal.SIGINT, lambda s, f: asyncio.create_task(handle_shutdown(s, f)))

@@ -28,6 +28,8 @@ class JobSearchScheduler:
         self._scheduler = AsyncIOScheduler()
         self._active_searches: Dict[str, JobSearchOut] = {}  # search_id -> JobSearch
         self._sent_jobs_store = sent_jobs_store
+        self._semaphore = asyncio.Semaphore(4)  # Limit to 4 concurrent jobs
+        self._main_loop = None
     
     async def initialize(self) -> None:
         """Initialize the scheduler."""
@@ -35,6 +37,8 @@ class JobSearchScheduler:
     
     async def start(self) -> None:
         """Start the scheduler."""
+        # Store the main event loop
+        self._main_loop = asyncio.get_running_loop()
         # Start the APScheduler
         self._scheduler.start()
         logger.info("Job search scheduler started")
@@ -90,10 +94,18 @@ class JobSearchScheduler:
         trigger = search.time_period.get_cron_trigger()
 
         async def job_wrapper():
-            await self._search_jobs_and_send_write_message_event(search)
+            async with self._semaphore:
+                await self._search_jobs_and_send_write_message_event(search)
+
+        def schedule_job():
+            # Use run_coroutine_threadsafe to schedule on the main event loop
+            if self._main_loop is not None:
+                asyncio.run_coroutine_threadsafe(job_wrapper(), self._main_loop)
+            else:
+                logger.error("Main event loop is not set. Cannot schedule job.")
 
         self._scheduler.add_job(
-            job_wrapper,
+            schedule_job,
             trigger=trigger,
             id=job_id,
             replace_existing=True,
@@ -108,9 +120,9 @@ class JobSearchScheduler:
             params = SearchJobsParams(
                 keywords=job_search.job_title,
                 location=job_search.location,
-                job_type=[jt.name for jt in job_search.job_types] if job_search.job_types else [],
-                remote_type=[rt.name for rt in job_search.remote_types] if job_search.remote_types else [],
-                time_period=job_search.time_period.name if job_search.time_period else None,
+                job_type=[jt.label for jt in job_search.job_types] if job_search.job_types else [],
+                remote_type=[rt.label for rt in job_search.remote_types] if job_search.remote_types else [],
+                time_period=job_search.time_period.display_name if job_search.time_period else None,
             ).model_dump(exclude_none=True)
             jobs = await search_jobs_via_scraper(params)
             # jobs is expected to be a list of dicts; adapt as needed
@@ -148,15 +160,6 @@ class JobSearchScheduler:
             return
         except Exception as e:
             logger.error(f"Error checking job search: {e}")
-            message_data = {
-                "user_id": job_search.user_id,
-                "message": "Sorry, there was an error checking for new jobs. Please try again later."
-            }
-            self._stream_manager.publish(StreamEvent(
-                type=StreamType.SEND_MESSAGE,
-                data=message_data,
-                source="job_search_scheduler"
-            ))
     
     async def _check_job_searches(self) -> None:
         """Check all active job searches for new listings concurrently."""

@@ -99,9 +99,9 @@ class Container:
             await self.mongo_connection.connect()
             await self.job_search_store.connect()
             await self.sent_jobs_store.connect()
-            await self.job_search_manager.initialize()
             await self.telegram_bot.initialize()
             await self.scheduler.initialize()
+            await self.job_search_manager.initialize()
             logger.info("All services initialized successfully")
         except Exception as e:
             logger.error(f"Error initializing services: {e}")

@@ -5,7 +5,6 @@ import os
 import logging
 from pathlib import Path
 from typing import Optional
-from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +15,6 @@ class Config:
     """
     
     def __init__(self):
-        # Load .env from main_project directory before accessing environment variables
-        env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../.env'))
-        load_dotenv(dotenv_path=env_path)
         # Optionally, print debug info
         # print(f"DEBUG: Loaded .env from {env_path}")
         # print(f"DEBUG: MONGO_URL = {os.getenv('MONGO_URL')}")

@@ -6,6 +6,7 @@ from fastapi import FastAPI, Query, HTTPException
 from linkedin_scraper_service.app.scraper import LinkedInScraperGuest
 from shared.data import SearchJobsParams, TimePeriod, JobType, RemoteType
 from typing import Optional
+import asyncio
 
 app = FastAPI()
 
@@ -53,4 +54,8 @@ async def check_proxy_connection():
             "success": proxy_ok
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Proxy check failed: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Proxy check failed: {str(e)}")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await LinkedInScraperGuest.close_all_browsers() 

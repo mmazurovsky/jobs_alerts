@@ -22,7 +22,7 @@ from shared.data import (
     StreamType, StreamEvent, StreamManager, JobSearchRemove,
     job_types_list, remote_types_list, time_periods_list
 )
-from core.job_search_manager import JobSearchManager
+from main_project.app.core.job_search_manager import JobSearchManager
 
 logger = logging.getLogger(__name__)
 
