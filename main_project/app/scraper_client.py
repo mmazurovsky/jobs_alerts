@@ -6,15 +6,13 @@ from typing import Any
 SCRAPER_BASE_URL = os.getenv("SCRAPER_SERVICE_URL")
 
 async def search_jobs_via_scraper(params: dict[str, Any]) -> Any:
-    timeout = httpx.Timeout(600.0)  # 5 minutes
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.get(f"{SCRAPER_BASE_URL}/search_jobs", params=params)
-        response.raise_for_status()
-        return response.json()
+    async with httpx.AsyncClient() as client:
+        response = await client.post(f"{SCRAPER_BASE_URL}/search_jobs", json=params)
+        return response
 
 async def check_proxy_connection_via_scraper() -> dict[str, Any]:
     """Check proxy connection via scraper service."""
-    timeout = httpx.Timeout(300.0)  # 5 minutes
+    timeout = httpx.Timeout(100.0) 
     async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.get(f"{SCRAPER_BASE_URL}/check_proxy_connection")
         response.raise_for_status()

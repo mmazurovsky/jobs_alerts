@@ -40,8 +40,16 @@ class LinkedInScraperGuest:
     _playwright = None
     _browser_lock = asyncio.Lock()
     
-    def __init__(self, name: Optional[str] = None, proxy_config: Optional[Dict[str, str]] = None):
-        self.logger = logging.getLogger(f"linkedin_scraper_guest{f'.{name}' if name else ''}")
+    def __init__(self, name: Optional[str] = None, proxy_config: Optional[Dict[str, str]] = None, keywords: Optional[str] = None, location: Optional[str] = None):
+        # Add keywords and location to logger name for context
+        context = []
+        if keywords:
+            context.append(str(keywords))
+        if location:
+            context.append(str(location))
+        context_str = ".".join(context)
+        logger_name = f"linkedin_scraper_guest{f'.{name}' if name else ''}{f'.{context_str}' if context_str else ''}"
+        self.logger = logging.getLogger(logger_name)
         self.name = name or "guest"
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
@@ -294,9 +302,9 @@ class LinkedInScraperGuest:
         self.logger.info("Closed Playwright context for guest scraping.")
 
     @classmethod
-    async def create_new_session(cls, *args, proxy_config=None, **kwargs):
+    async def create_new_session(cls, *args, proxy_config=None, keywords=None, location=None, **kwargs):
         """Create a new browser context session for a job search."""
-        instance = cls(*args, proxy_config=proxy_config, **kwargs)
+        instance = cls(*args, proxy_config=proxy_config, keywords=keywords, location=location, **kwargs)
         await instance._initialize()
         return instance
 
