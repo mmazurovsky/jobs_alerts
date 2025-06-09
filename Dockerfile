@@ -87,4 +87,5 @@ COPY --chown=scraper:scraper tests/ ./tests/
 ENV PYTHONPATH=/home/scraper/app
 
 # Entry point
+EXPOSE 8080
 CMD ["python", "src/main.py"]

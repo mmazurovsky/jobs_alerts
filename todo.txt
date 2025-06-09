@@ -1,0 +1,26 @@
+
+
+move scraper to another service and provide api
+secure scraper api
+scale scraper service
+
+if cant delete return that it was not deleted instead of success
+
+add queues for jobs
+
+add premium
+hide some options behind premium
+add only 7 days trial period with limited features
+
+only run during the day
+fix cron for jobs
+
+
+
+
+add description parsing
+summarize description with LLM, summarize techstack
+add CV upload
+check compatibility between CV and description with LLM
+create CL with LLM for paid users
+min image size
