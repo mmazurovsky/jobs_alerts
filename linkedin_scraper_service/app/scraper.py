@@ -36,13 +36,16 @@ class LinkedInScraperGuest:
         {'width': 1680, 'height': 1050},
     ]
     
+    _browser: Optional[Browser] = None
+    _playwright = None
+    _browser_lock = asyncio.Lock()
+    
     def __init__(self, name: Optional[str] = None, proxy_config: Optional[Dict[str, str]] = None):
         self.logger = logging.getLogger(f"linkedin_scraper_guest{f'.{name}' if name else ''}")
         self.name = name or "guest"
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
-        self.playwright = None
         self._last_log_time = time.time()
         self._watchdog_task = None
         self._patch_logger()
@@ -167,48 +170,52 @@ class LinkedInScraperGuest:
                 await route.continue_()
         await self.page.route("**/*", route_intercept)
 
+    @classmethod
+    async def _get_browser(cls, launch_options=None):
+        async with cls._browser_lock:
+            if cls._browser is None:
+                if cls._playwright is None:
+                    cls._playwright = await async_playwright().start()
+                if launch_options is None:
+                    launch_options = {
+                        'headless': True,
+                        'args': [
+                            '--no-sandbox',
+                            '--disable-blink-features=AutomationControlled',
+                            '--disable-dev-shm-usage',
+                            '--disable-extensions',
+                            '--disable-plugins',
+                            '--disable-default-apps',
+                            '--disable-background-timer-throttling',
+                            '--disable-backgrounding-occluded-windows',
+                            '--disable-renderer-backgrounding',
+                            '--disable-features=TranslateUI',
+                            '--disable-ipc-flooding-protection',
+                            '--no-first-run',
+                            '--no-default-browser-check',
+                            '--disable-web-security',
+                            '--disable-features=VizDisplayCompositor',
+                            '--disable-infobars',
+                            '--disable-notifications',
+                            '--disable-popup-blocking',
+                            '--disable-save-password-bubble',
+                            '--disable-translate',
+                            '--disable-background-networking',
+                            '--disable-sync',
+                            '--disable-default-apps',
+                            '--disable-extensions-file-access-check',
+                            '--disable-extensions-http-throttling',
+                            '--disable-component-extensions-with-background-pages',
+                        ]
+                    }
+                cls._browser = await cls._playwright.chromium.launch(**launch_options)
+            return cls._browser
+
     async def _initialize(self):
         try:
-            self.logger.info("Starting browser initialization...")
-            self.playwright = await async_playwright().start()
-            
-            # Browser launch options
-            launch_options = {
-                'headless': True,
-                'args': [
-                    '--no-sandbox',
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-dev-shm-usage',
-                    '--disable-extensions',
-                    '--disable-plugins',
-                    '--disable-default-apps',
-                    '--disable-background-timer-throttling',
-                    '--disable-backgrounding-occluded-windows',
-                    '--disable-renderer-backgrounding',
-                    '--disable-features=TranslateUI',
-                    '--disable-ipc-flooding-protection',
-                    '--no-first-run',
-                    '--no-default-browser-check',
-                    '--disable-web-security',
-                    '--disable-features=VizDisplayCompositor',
-                    '--disable-infobars',
-                    '--disable-notifications',
-                    '--disable-popup-blocking',
-                    '--disable-save-password-bubble',
-                    '--disable-translate',
-                    '--disable-background-networking',
-                    '--disable-sync',
-                    '--disable-default-apps',
-                    '--disable-extensions-file-access-check',
-                    '--disable-extensions-http-throttling',
-                    '--disable-component-extensions-with-background-pages',
-                ]
-            }
-            
-            self.logger.info("Launching browser...")
-            self.browser = await self.playwright.chromium.launch(**launch_options)
-            self.logger.info("Browser launched successfully")
-            
+            self.logger.info("Starting browser/context initialization...")
+            # Always get the shared browser instance
+            self.browser = await self._get_browser()
             # Context options with proxy and human-like settings
             chrome_version = self._get_random_chrome_version()
             context_options = {
@@ -216,7 +223,7 @@ class LinkedInScraperGuest:
                 'viewport': random.choice(self.VIEWPORT_SIZES),
                 'locale': 'en-US',
                 'timezone_id': 'America/New_York',
-                'geolocation': None,  # Can add geolocation if needed
+                'geolocation': None,
                 'permissions': [],
                 'extra_http_headers': {
                     'Accept-Language': 'en-US,en;q=0.9',
@@ -234,185 +241,61 @@ class LinkedInScraperGuest:
                     'Cache-Control': 'max-age=0',
                 }
             }
-            
             # Add proxy if configured
             if self.proxy_config:
                 context_options['proxy'] = self.proxy_config
                 self.logger.info(f"Using proxy: {self.proxy_config.get('server', 'configured')}")
             else:
                 self.logger.info("No proxy configured, using direct connection")
-            
-            try:
-                self.logger.info("Creating browser context...")
-                self.context = await self.browser.new_context(**context_options)
-                self.logger.info("Browser context created successfully")
-            except Exception as context_error:
-                self.logger.error(f"Failed to create browser context: {context_error}")
-                if self.proxy_config:
-                    self.logger.error(f"Proxy connection may have failed: {self.proxy_config.get('server', 'configured')}")
-                    self.logger.info("Retrying without proxy...")
-                    # Remove proxy and try again
-                    context_options_no_proxy = context_options.copy()
-                    if 'proxy' in context_options_no_proxy:
-                        del context_options_no_proxy['proxy']
-                    try:
-                        self.context = await self.browser.new_context(**context_options_no_proxy)
-                        self.logger.info("Browser context created successfully without proxy")
-                        self.proxy_config = None  # Disable proxy for this session
-                    except Exception as fallback_error:
-                        self.logger.error(f"Failed to create browser context even without proxy: {fallback_error}")
-                        raise
-                else:
-                    raise
-            
+            self.context = await self.browser.new_context(**context_options)
+            self.logger.info("Created new browser context")
             # Add stealth scripts to avoid detection
             await self.context.add_init_script("""
-                // Remove webdriver property
-                Object.defineProperty(navigator, 'webdriver', {
-                    get: () => undefined
-                });
-                
-                // Set platform to Linux
-                Object.defineProperty(navigator, 'platform', {
-                    get: () => 'Linux x86_64'
-                });
-                
-                // Set Chrome-specific properties
-                Object.defineProperty(navigator, 'vendor', {
-                    get: () => 'Google Inc.'
-                });
-                
-                Object.defineProperty(navigator, 'vendorSub', {
-                    get: () => ''
-                });
-                
-                Object.defineProperty(navigator, 'productSub', {
-                    get: () => '20030107'
-                });
-                
-                // Mock plugins for Chrome on Linux
-                Object.defineProperty(navigator, 'plugins', {
-                    get: () => ({
-                        length: 3,
-                        0: { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer' },
-                        1: { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai' },
-                        2: { name: 'Native Client', filename: 'internal-nacl-plugin' }
-                    })
-                });
-                
-                // Mock languages
-                Object.defineProperty(navigator, 'languages', {
-                    get: () => ['en-US', 'en']
-                });
-                
-                // Override chrome property with realistic Chrome features
-                window.chrome = {
-                    runtime: {
-                        onConnect: undefined,
-                        onMessage: undefined
-                    },
-                    loadTimes: function() {
-                        return {
-                            commitLoadTime: Date.now() / 1000 - Math.random() * 10,
-                            connectionInfo: 'http/1.1',
-                            finishDocumentLoadTime: Date.now() / 1000 - Math.random() * 5,
-                            finishLoadTime: Date.now() / 1000 - Math.random() * 3,
-                            firstPaintAfterLoadTime: 0,
-                            firstPaintTime: Date.now() / 1000 - Math.random() * 8,
-                            navigationType: 'Other',
-                            npnNegotiatedProtocol: 'unknown',
-                            requestTime: Date.now() / 1000 - Math.random() * 15,
-                            startLoadTime: Date.now() / 1000 - Math.random() * 12,
-                            wasAlternateProtocolAvailable: false,
-                            wasFetchedViaSpdy: false,
-                            wasNpnNegotiated: false
-                        };
-                    },
-                    csi: function() {
-                        return {
-                            pageT: Date.now() - Math.random() * 1000,
-                            startE: Date.now() - Math.random() * 2000,
-                            tran: 15
-                        };
-                    }
-                };
-                
-                // Override permissions
-                Object.defineProperty(navigator, 'permissions', {
-                    get: () => ({
-                        query: (parameters) => (
-                            parameters.name === 'notifications' ?
-                                Promise.resolve({ state: Notification.permission }) :
-                                Promise.resolve({ state: 'granted' })
-                        )
-                    })
-                });
-                
-                // Mock hardware concurrency for typical Linux system
-                Object.defineProperty(navigator, 'hardwareConcurrency', {
-                    get: () => 8
-                });
-                
-                // Mock device memory for typical Linux system
-                Object.defineProperty(navigator, 'deviceMemory', {
-                    get: () => 8
-                });
-                
-                // Mock connection for typical broadband
-                Object.defineProperty(navigator, 'connection', {
-                    get: () => ({
-                        effectiveType: '4g',
-                        rtt: 50,
-                        downlink: 10
-                    })
-                });
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                Object.defineProperty(navigator, 'platform', { get: () => 'Linux x86_64' });
+                Object.defineProperty(navigator, 'vendor', { get: () => 'Google Inc.' });
+                Object.defineProperty(navigator, 'vendorSub', { get: () => '' });
+                Object.defineProperty(navigator, 'productSub', { get: () => '20030107' });
+                Object.defineProperty(navigator, 'plugins', { get: () => ({ length: 3, 0: { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer' }, 1: { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai' }, 2: { name: 'Native Client', filename: 'internal-nacl-plugin' } }) });
+                Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+                window.chrome = { runtime: { onConnect: undefined, onMessage: undefined }, loadTimes: function() { return { commitLoadTime: Date.now() / 1000 - Math.random() * 10, connectionInfo: 'http/1.1', finishDocumentLoadTime: Date.now() / 1000 - Math.random() * 5, finishLoadTime: Date.now() / 1000 - Math.random() * 3, firstPaintAfterLoadTime: 0, firstPaintTime: Date.now() / 1000 - Math.random() * 8, navigationType: 'Other', npnNegotiatedProtocol: 'unknown', requestTime: Date.now() / 1000 - Math.random() * 15, startLoadTime: Date.now() / 1000 - Math.random() * 12, wasAlternateProtocolAvailable: false, wasFetchedViaSpdy: false, wasNpnNegotiated: false }; }, csi: function() { return { pageT: Date.now() - Math.random() * 1000, startE: Date.now() - Math.random() * 2000, tran: 15 }; } };
+                Object.defineProperty(navigator, 'permissions', { get: () => ({ query: (parameters) => ( parameters.name === 'notifications' ? Promise.resolve({ state: Notification.permission }) : Promise.resolve({ state: 'granted' }) ) }) });
+                Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+                Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+                Object.defineProperty(navigator, 'connection', { get: () => ({ effectiveType: '4g', rtt: 50, downlink: 10 }) });
             """)
-            
-            try:
-                self.logger.info("Creating new page...")
-                self.page = await self.context.new_page()
-                # Inject playwright-stealth
-                await stealth_async(self.page)
-                self.logger.info("Stealth script injected.")
-                await self._block_resource_types()
-                # Test navigation to verify everything works
-                self.logger.info("Testing navigation to about:blank...")
-                await self.page.goto('about:blank', timeout=10000)
-                self.logger.info(f"Test navigation successful, current URL: {self.page.url}")
-                
-            except Exception as page_error:
-                self.logger.error(f"Failed to create page or test navigation: {page_error}")
-                raise
-            
-            self.logger.info("Initialized Playwright browser for guest scraping with human-like behavior.")
-            
+            self.logger.info("Creating new page...")
+            self.page = await self.context.new_page()
+            await stealth_async(self.page)
+            self.logger.info("Stealth script injected.")
+            await self._block_resource_types()
+            self.logger.info("Testing navigation to about:blank...")
+            await self.page.goto('about:blank', timeout=10000)
+            self.logger.info(f"Test navigation successful, current URL: {self.page.url}")
+            self.logger.info("Initialized Playwright context for guest scraping with human-like behavior.")
         except Exception as e:
-            self.logger.error(f"Browser initialization failed: {e}")
+            self.logger.error(f"Context initialization failed: {e}")
             await self._cleanup()
             raise
-    
+
     async def _cleanup(self):
-        """Clean up browser resources."""
-        self.logger.info("Cleaning up browser resources...")
+        """Clean up context and page resources only."""
+        self.logger.info("Cleaning up context and page resources...")
         try:
             if hasattr(self, 'page') and self.page:
                 await self.page.close()
             if hasattr(self, 'context') and self.context:
                 await self.context.close()
-            if hasattr(self, 'browser') and self.browser:
-                await self.browser.close()
-            if hasattr(self, 'playwright') and self.playwright:
-                await self.playwright.stop()
         except Exception as e:
             self.logger.error(f"Error during cleanup: {e}")
 
     async def close(self):
         await self._cleanup()
-        self.logger.info("Closed Playwright browser for guest scraping.")
+        self.logger.info("Closed Playwright context for guest scraping.")
 
     @classmethod
     async def create_new_session(cls, *args, proxy_config=None, **kwargs):
-        """Create a new browser session for a job search."""
+        """Create a new browser context session for a job search."""
         instance = cls(*args, proxy_config=proxy_config, **kwargs)
         await instance._initialize()
         return instance
@@ -737,7 +620,7 @@ class LinkedInScraperGuest:
                 await self._human_like_click(done_btn)
                 self.logger.info("Clicked 'Done' button for job type filter.")
             else:
-                self.logger.error("No 'Done' button found for job type filter.")
+                self.logger.info("No 'Done' button found for job type filter.")
             await self.page.keyboard.press('Escape')
             await self._random_delay(0.5, 1.5)
             return any_applied
@@ -781,7 +664,7 @@ class LinkedInScraperGuest:
                 await self._human_like_click(done_btn)
                 self.logger.info("Clicked 'Done' button for remote type filter.")
             else:
-                self.logger.error("No 'Done' button found for remote type filter.")
+                self.logger.info("No 'Done' button found for remote type filter.")
             await self.page.keyboard.press('Escape')
             await self._random_delay(0.5, 1.5)
             return any_applied
@@ -978,3 +861,13 @@ class LinkedInScraperGuest:
     def _is_masked(value: str) -> bool:
         # Consider masked if the value contains at least one '*' character
         return value is not None and '*' in value 
+
+    @classmethod
+    async def close_all_browsers(cls):
+        async with cls._browser_lock:
+            if cls._browser is not None:
+                await cls._browser.close()
+                cls._browser = None
+            if cls._playwright is not None:
+                await cls._playwright.stop()
+                cls._playwright = None 

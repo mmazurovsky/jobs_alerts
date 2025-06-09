@@ -1,11 +1,9 @@
-version: '3.8'
-
 services:
   main_project:
     build:
       context: ..
       dockerfile: main_project/Dockerfile
-    image: ${MY_IMAGE}
+    image: registry.digitalocean.com/mmazurovsky-registry/main_project
     env_file:
       - .env
     volumes:

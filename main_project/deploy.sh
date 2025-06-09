@@ -1,10 +1,8 @@
 #!/bin/bash
 set -e
 
-MY_IMAGE=registry.digitalocean.com/mmazurovsky-registry/main_project
 MY_ENV=prod
 
-export MY_IMAGE
 export MY_ENV
 export DOCKER_BUILDKIT=1
 
