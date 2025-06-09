@@ -95,7 +95,7 @@ class JobSearchScheduler:
 
         async def job_wrapper():
             async with self._semaphore:
-                await self._search_jobs_and_send_write_message_event(search)
+                await self.trigger_scraper_job_and_log(search)
 
         def schedule_job():
             # Use run_coroutine_threadsafe to schedule on the main event loop
@@ -113,61 +113,13 @@ class JobSearchScheduler:
         )
         logger.info(f"Scheduled job search {search.id} with trigger {trigger}")
     
-    async def _search_jobs_and_send_write_message_event(self, job_search: JobSearchOut):
-        """Check a single job search for new listings."""
-        try:
-            user_id = job_search.user_id
-            params = SearchJobsParams(
-                keywords=job_search.job_title,
-                location=job_search.location,
-                job_type=[jt.label for jt in job_search.job_types] if job_search.job_types else [],
-                remote_type=[rt.label for rt in job_search.remote_types] if job_search.remote_types else [],
-                time_period=job_search.time_period.display_name if job_search.time_period else None,
-            ).model_dump(exclude_none=True)
-            jobs = await search_jobs_via_scraper(params)
-            # jobs is expected to be a list of dicts; adapt as needed
-            if jobs:
-                sent_jobs = await self._sent_jobs_store.get_sent_jobs_for_user(user_id)
-                sent_job_urls = {job.job_url for job in sent_jobs}
-                new_jobs = [job for job in jobs if job.get("link") not in sent_job_urls]
-                if new_jobs:
-                    message = (
-                        f"🔔 New job listings found for: {job_search.job_title} in {job_search.location}\n\n"
-                    )
-                    for job in new_jobs:
-                        message += (
-                            f"🏢 {job.get('company')}\n"
-                            f"💼 {job.get('title')}\n"
-                            f"📍 {job.get('location')}\n"
-                            f"⏰ {job.get('created_ago')}\n"
-                            f"🔗 {job.get('link')}\n\n"
-                        )
-                    for job in new_jobs:
-                        await self._sent_jobs_store.save_sent_job(user_id, job.get("link"))
-                    message_data = {
-                        "user_id": user_id,
-                        "message": message
-                    }
-                    self._stream_manager.publish(StreamEvent(
-                        type=StreamType.SEND_MESSAGE,
-                        data=message_data,
-                        source="job_search_scheduler"
-                    ))
-                else:
-                    logger.info(f"No new jobs found for {job_search.job_title} in {job_search.location}")
-        except asyncio.CancelledError:
-            logger.info(f"Job search for user {job_search.user_id} was cancelled (likely due to shutdown). No error.")
-            return
-        except Exception as e:
-            logger.error(f"Error checking job search: {e}")
-    
     async def _check_job_searches(self) -> None:
         """Check all active job searches for new listings concurrently."""
         logger.info(f"Checking {len(self._active_searches)} job searches")
         
         # Create tasks for all job searches
         search_tasks = [
-            self._search_jobs_and_send_write_message_event(job_search)
+            self.trigger_scraper_job_and_log(job_search)
             for job_search in self._active_searches.values()
         ]
         
@@ -176,4 +128,38 @@ class JobSearchScheduler:
             await asyncio.gather(*search_tasks)
         except Exception as e:
             logger.error(f"Error during concurrent job searches: {e}")
-            # Individual search errors are handled in _search_jobs_and_send_write_message_event 
+            # Individual search errors are handled in trigger_scraper_job_and_log
+
+    async def trigger_scraper_job_and_log(self, job_search: JobSearchOut):
+        # Log all job search parameters
+        log_data = {
+            "job_search_id": job_search.id,
+            "user_id": job_search.user_id,
+            "keywords": job_search.job_title,
+            "location": job_search.location,
+            "job_types": [jt.label for jt in job_search.job_types] if job_search.job_types else [],
+            "remote_types": [rt.label for rt in job_search.remote_types] if job_search.remote_types else [],
+            "time_period": job_search.time_period.display_name if job_search.time_period else None,
+        }
+        logger.info(f"Requesting scraper job: {log_data}")
+        # Build callback URL by appending the path to the base URL from env
+        base_url = os.getenv("CALLBACK_URL")
+        callback_url = base_url.rstrip("/") + "/job_results_callback"
+        params = SearchJobsParams(
+            keywords=job_search.job_title,
+            location=job_search.location,
+            job_type=log_data["job_types"],
+            remote_type=log_data["remote_types"],
+            time_period=log_data["time_period"],
+        ).model_dump(exclude_none=True)
+        params["callback_url"] = callback_url
+        params["job_search_id"] = job_search.id
+        params["user_id"] = job_search.user_id
+        response = await search_jobs_via_scraper(params)
+        log_data["callback_url"] = callback_url
+        log_data["status_code"] = response.status_code
+        if 200 <= response.status_code < 300:
+            logger.info(f"Successfully triggered scraper job: {log_data}")
+        else:
+            log_data["response_text"] = response.text
+            logger.error(f"Failed to trigger scraper job: {log_data}") 
