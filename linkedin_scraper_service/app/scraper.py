@@ -41,6 +41,7 @@ class LinkedInScraperGuest:
     _browser_lock = asyncio.Lock()
     
     def __init__(self, name: Optional[str] = None, proxy_config: Optional[Dict[str, str]] = None):
+        # Logger will be set dynamically in search_jobs
         self.logger = logging.getLogger(f"linkedin_scraper_guest{f'.{name}' if name else ''}")
         self.name = name or "guest"
         self.browser: Optional[Browser] = None
@@ -79,7 +80,6 @@ class LinkedInScraperGuest:
                     except Exception as e:
                         msg = f"Watchdog failed to close modal: {e}"
                         self.logger.error(msg)
-                        await self._post_watchdog_screenshot(msg)
                     # Reset timer so we don't spam
                     self._last_log_time = time.time()
         except asyncio.CancelledError:
@@ -213,7 +213,7 @@ class LinkedInScraperGuest:
 
     async def _initialize(self):
         try:
-            self.logger.info("Starting browser/context initialization...")
+            self.logger.info("Starting new browser context initialization...")
             # Always get the shared browser instance
             self.browser = await self._get_browser()
             # Context options with proxy and human-like settings
@@ -310,8 +310,20 @@ class LinkedInScraperGuest:
         time_period: Optional[TimePeriod] = None,
         max_jobs: Optional[int] = None,
         blacklist: Optional[List[str]] = None,
+        user_id: Optional[str] = None,
     ) -> List[ShortJobListing]:
-        """Search for jobs with a timeout to prevent hanging."""
+        # Set logger name dynamically for this search
+        context = []
+        if keywords:
+            context.append(str(keywords))
+        if location:
+            context.append(str(location))
+        if user_id:
+            context.append(str(user_id))
+        context_str = ".".join(context)
+        logger_name = f"linkedin_scraper_guest{f'.{context_str}' if context_str else ''}"
+        self.logger = logging.getLogger(logger_name)
+        self._patch_logger()
         try:
             # Set a timeout for the entire search operation (5 minutes)
             return await self._search_jobs_internal(
@@ -329,6 +341,8 @@ class LinkedInScraperGuest:
                     await self._watchdog_task
                 except asyncio.CancelledError:
                     pass
+            # Always cleanup resources after job search
+            await self.close()
 
     async def _restart_session(self):
         await self._cleanup()
@@ -339,7 +353,7 @@ class LinkedInScraperGuest:
         try:
             api_url = f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
             public_url = f"https://www.linkedin.com/jobs/view/{job_id}/"
-            await self.page.goto(api_url, timeout=30000, wait_until='domcontentloaded')
+            await self.page.goto(api_url, timeout=10000, wait_until='domcontentloaded')
             await self._random_delay(0.5, 1.5)
             # Title
             title_el = await self.page.query_selector('body > section > div > div.top-card-layout__entity-info-container.flex.flex-wrap.papabear\\:flex-nowrap > div > a > h2')
@@ -389,6 +403,7 @@ class LinkedInScraperGuest:
         url = None
         attempt = 1
         while attempt <= max_retries:
+            # Chunk 1: Time check and URL building
             try:
                 # Return empty list if CET time is between 00:30 and 06:30
                 berlin_tz = pytz.timezone('Europe/Berlin')
@@ -407,31 +422,77 @@ class LinkedInScraperGuest:
                 if time_period:
                     params.append(f"f_TPR={self._get_time_period_code(time_period)}")
                 url = f"{base_url}?{'&'.join(params)}"
+            except Exception as time_url_error:
+                if attempt == max_retries:
+                    self.logger.error(f"Time check/URL building failed after {max_retries} attempts: {time_url_error}")
+                    return []
+                self.logger.error(f"Time check/URL building error (attempt {attempt}): {time_url_error}, restarting session...")
+                await self._restart_session()
+                await asyncio.sleep(2 * attempt)
+                attempt += 1
+                continue
 
+            # Chunk 2: Navigation to search page
+            try:
                 if attempt > 1:
                     await self._restart_session()
 
                 self.logger.info(f"Current URL before navigation: {self.page.url}")
                 self.logger.info(f"Navigating to {url}")
-                await self.page.goto(url, timeout=60000, wait_until='domcontentloaded')
+                await self.page.goto(url, timeout=20000, wait_until='domcontentloaded')
                 self.logger.info(f"Successfully navigated to: {self.page.url}")
                 if 'chrome-error://chromewebdata/' in self.page.url:
                     raise Exception("Navigation ended up on unexpected URL: chrome-error://chromewebdata/")
+            except Exception as nav_error:
+                if attempt == max_retries:
+                    self.logger.error(f"Navigation to search page failed after {max_retries} attempts for {url}: {nav_error}")
+                    return []
+                self.logger.error(f"Navigation error (attempt {attempt}) for {url}: {nav_error}, restarting session...")
+                await self._restart_session()
+                await asyncio.sleep(2 * attempt)
+                attempt += 1
+                continue
 
+            # Chunk 3: Initial page setup (delays, mouse movement, modal handling)
+            try:
                 await self._random_delay(2, 4)
                 current_url_after_delay = self.page.url
                 self.logger.info(f"URL after delay: {current_url_after_delay}")
                 await self._human_like_mouse_movement()
                 await self._close_sign_in_modal()
                 await self._reject_cookies()
+            except Exception as setup_error:
+                if attempt == max_retries:
+                    self.logger.error(f"Initial page setup failed after {max_retries} attempts: {setup_error}")
+                    return []
+                self.logger.error(f"Initial page setup error (attempt {attempt}): {setup_error}, restarting session...")
+                await self._restart_session()
+                await asyncio.sleep(2 * attempt)
+                attempt += 1
+                continue
 
-                # Check for no results after loading the page, before applying filters
+            # Chunk 4: Pre-filter "no-results" check
+            try:
+                # Wait for jobs container to load before checking for no-results section
+                await self._random_delay(2, 4)
+                await self.page.wait_for_selector('.jobs-search__results-list', timeout=10000)
                 self.logger.info("Checking for no-results section before applying filters...")
                 no_results_section = await self.page.query_selector('section.no-results')
                 if no_results_section:
                     self.logger.info("No jobs found - detected 'no-results' section before filters. Skipping filter application.")
                     return []
-                
+            except Exception as pre_filter_check_error:
+                if attempt == max_retries:
+                    self.logger.error(f"Pre-filter no-results check failed after {max_retries} attempts: {pre_filter_check_error}")
+                    return []
+                self.logger.error(f"Pre-filter no-results check error (attempt {attempt}): {pre_filter_check_error}, restarting session...")
+                await self._restart_session()
+                await asyncio.sleep(2 * attempt)
+                attempt += 1
+                continue
+
+            # Chunk 5: Filter application (remote types and job types)
+            try:
                 # Select remote type filter if needed
                 if remote_types:
                     selected_filters = [rt.label for rt in remote_types]
@@ -444,7 +505,7 @@ class LinkedInScraperGuest:
                         current_url = self.page.url
                         self.logger.info(f"None of selected remote type filters could be applied. URL: {current_url}, Available remote type filters: {label_texts}, Selected remote type filters: {selected_filters}")
                         return []
-                    
+                        
                 # Select job type filter if needed
                 if job_types:
                     selected_filters = [jt.label for jt in job_types]
@@ -457,7 +518,18 @@ class LinkedInScraperGuest:
                         current_url = self.page.url
                         self.logger.info(f"None of selected job type filters could be applied. URL: {current_url}, Available job type filters: {label_texts}, Selected job type filters: {selected_filters}")
                         return []
+            except Exception as filter_error:
+                if attempt == max_retries:
+                    self.logger.error(f"Filter application failed after {max_retries} attempts (remote_types: {remote_types}, job_types: {job_types}): {filter_error}")
+                    return []
+                self.logger.error(f"Filter application error (attempt {attempt}) for remote_types: {remote_types}, job_types: {job_types}: {filter_error}, restarting session...")
+                await self._restart_session()
+                await asyncio.sleep(2 * attempt)
+                attempt += 1
+                continue
 
+            # Chunk 6: Authwall handling
+            try:
                 # Check for authwall in URL after applying filters
                 current_url = self.page.url
                 if 'authwall' in current_url:
@@ -470,19 +542,31 @@ class LinkedInScraperGuest:
                     if 'authwall' in current_url:
                         self.logger.warning(f"Still on authwall after going back. Aborting search.")
                         return []
+            except Exception as authwall_error:
+                if attempt == max_retries:
+                    self.logger.error(f"Authwall handling failed after {max_retries} attempts: {authwall_error}")
+                    return []
+                self.logger.error(f"Authwall handling error (attempt {attempt}): {authwall_error}, restarting session...")
+                await self._restart_session()
+                await asyncio.sleep(2 * attempt)
+                attempt += 1
+                continue
 
+            # Chunk 7: Post-filter "no-results" check
+            try:
                 # Check for no results again after applying filters
                 self.logger.info("Checking for no-results section after applying filters...")
                 no_results_section = None
-                max_retries = 3
-                for attempt_retry in range(1, max_retries + 1):
+                max_retries_inner = 3
+                for attempt_retry in range(1, max_retries_inner + 1):
                     try:
                         await self._random_delay(2, 5)
+                        await self.page.wait_for_selector('.jobs-search__results-list', timeout=10000)
                         no_results_section = await self.page.query_selector('section.no-results')
                         break
                     except Exception as e:
                         self.logger.error(f"Attempt {attempt_retry}: Error checking for no-results section: {e}")
-                        if attempt_retry < max_retries:
+                        if attempt_retry < max_retries_inner:
                             await asyncio.sleep(1.5 * attempt_retry)
                         else:
                             # Log page state before raising
@@ -497,7 +581,18 @@ class LinkedInScraperGuest:
                 if no_results_section:
                     self.logger.info("No jobs found after applying filters - detected 'no-results' section")
                     return []
+            except Exception as post_filter_check_error:
+                if attempt == max_retries:
+                    self.logger.error(f"Post-filter no-results check failed after {max_retries} attempts: {post_filter_check_error}")
+                    return []
+                self.logger.error(f"Post-filter no-results check error (attempt {attempt}): {post_filter_check_error}, restarting session...")
+                await self._restart_session()
+                await asyncio.sleep(2 * attempt)
+                attempt += 1
+                continue
 
+            # Chunk 8: Results container wait and scrolling
+            try:
                 # Wait for jobs container to load
                 self.logger.info("Waiting for .jobs-search__results-list container after filters...")
                 try:
@@ -506,7 +601,7 @@ class LinkedInScraperGuest:
                     self.logger.error(f"Timeout or error waiting for .jobs-search__results-list: {wait_error}")
                     html = await self.page.content()
                     self.logger.error(f"Page HTML (first 2000 chars): {html[:2000]}")
-                    await self._post_watchdog_screenshot(f"Timeout or error waiting for .jobs-search__results-list: {wait_error}")
+                    self.logger.error(f"Timeout or error waiting for .jobs-search__results-list: {wait_error}")
                     return []
                 container = await self.page.query_selector('.jobs-search__results-list')
                 if container:
@@ -516,18 +611,18 @@ class LinkedInScraperGuest:
                     await self._scroll_job_results()
                 else:
                     self.logger.warning(".jobs-search__results-list container NOT found!")
+            except Exception as container_scroll_error:
+                if attempt == max_retries:
+                    self.logger.error(f"Results container wait/scrolling failed after {max_retries} attempts: {container_scroll_error}")
+                    return []
+                self.logger.error(f"Results container wait/scrolling error (attempt {attempt}): {container_scroll_error}, restarting session...")
+                await self._restart_session()
+                await asyncio.sleep(2 * attempt)
+                attempt += 1
+                continue
 
-                # # After scrolling job results, check for sign-in overlay
-                # overlay_selector = 'h2.blurred_overlay__title'
-                # overlay_el = await self.page.query_selector(overlay_selector)
-                # if overlay_el:
-                #     overlay_text = await overlay_el.inner_text()
-                #     if 'Sign in to view' in overlay_text:
-                #         self.logger.error("Detected LinkedIn overlay: 'Sign in to view all job postings'. Aborting search.")
-                #         await self._restart_session()
-                #         await asyncio.sleep(2 * attempt)
-                #         attempt += 1
-                #         continue
+            # Chunk 9: Job card extraction and details fetching
+            try:
                 # Get all job cards after scrolling
                 job_cards = await self.page.query_selector_all('.jobs-search__results-list > li')
                 self.logger.info(f"Found {len(job_cards)} job cards after scrolling.")
@@ -547,18 +642,16 @@ class LinkedInScraperGuest:
                 results = await self._get_job_details_bulk(job_ids)
                 self.logger.info(f"Extracted {len(results)} jobs from {len(job_ids)} job ids.")
                 return results
-            except Exception as nav_error:
+            except Exception as extraction_error:
                 if attempt == max_retries:
-                    await self._post_watchdog_screenshot(
-                        f"All navigation attempts failed for {url}: {nav_error}",
-                        include_logs=True
-                    )
+                    self.logger.error(f"Job card extraction/details fetching failed after {max_retries} attempts: {extraction_error}")
                     return []
-                self.logger.error(f"Navigation error: {nav_error}, restarting session...")
+                self.logger.error(f"Job card extraction/details fetching error (attempt {attempt}): {extraction_error}, restarting session...")
                 await self._restart_session()
                 await asyncio.sleep(2 * attempt)
                 attempt += 1
                 continue
+
         return []
 
     async def _human_like_click(self, element):
@@ -588,22 +681,22 @@ class LinkedInScraperGuest:
         if btn:
             await self._human_like_click(btn)
             await self._random_delay(0.5, 1.5)
-            labels = await self.page.query_selector_all('div[aria-label="Job type filter options"] label')
-            label_texts = [await label_el.inner_text() for label_el in labels]
+            found_labels = await self.page.query_selector_all('div[aria-label="Job type filter options"] label')
+            label_texts = [await label_el.inner_text() for label_el in found_labels]
             self.logger.info(f"Job type filter labels found: {label_texts}")
+            self.logger.info(f"Job types to apply: {job_types}")
             any_applied = False
-            for jt in job_types:
-                label_text = jt.label.lower()
-                for label_el in labels:
-                    text = (await label_el.inner_text()).lower()
-                    self.logger.info(f"Checking label: '{text}' for job type '{label_text}'")
-                    if label_text in text:
+            for applied_job_type in job_types:
+                applied_label_text = applied_job_type.label.lower()
+                for label_el in found_labels:
+                    found_text = (await label_el.inner_text()).lower()
+                    if applied_label_text in found_text:
                         is_visible = await label_el.is_visible()
                         is_enabled = await label_el.is_enabled()
-                        self.logger.info(f"Label '{text}' is_visible={is_visible}, is_enabled={is_enabled}")
+                        self.logger.info(f"Label '{found_text}' is_visible={is_visible}, is_enabled={is_enabled}")
                         if is_visible and is_enabled:
                             await self._human_like_click(label_el)
-                            self.logger.info(f"Clicked label for job type: {jt.label}")
+                            self.logger.info(f"Clicked label for job type: {applied_job_type.label}")
                             await self._random_delay(0.3, 0.8)
                             for_attr = await label_el.get_attribute('for')
                             if for_attr:
@@ -611,7 +704,7 @@ class LinkedInScraperGuest:
                                 if cb:
                                     await cb.check()
                                     checked = await cb.is_checked()
-                                    self.logger.info(f"Checkbox for job type '{jt.label}' checked: {checked}")
+                                    self.logger.info(f"Checkbox for job type '{applied_job_type.label}' checked: {checked}")
                             any_applied = True
                             break
             await self._random_delay(0.5, 1)
@@ -635,12 +728,12 @@ class LinkedInScraperGuest:
             labels = await self.page.query_selector_all('div[aria-label="Remote filter options"] label')
             label_texts = [await label_el.inner_text() for label_el in labels]
             self.logger.info(f"Remote type filter labels found: {label_texts}")
+            self.logger.info(f"Remote types to apply: {remote_types}")
             any_applied = False
             for rt in remote_types:
                 label_text = rt.label.lower()
                 for label_el in labels:
                     text = (await label_el.inner_text()).lower()
-                    self.logger.info(f"Checking label: '{text}' for remote type '{label_text}'")
                     if label_text in text:
                         is_visible = await label_el.is_visible()
                         is_enabled = await label_el.is_enabled()
@@ -853,7 +946,7 @@ class LinkedInScraperGuest:
             except Exception as e:
                 await self._cleanup()
                 if attempt == max_retries:
-                    await self._post_watchdog_screenshot(f"Proxy connection test failed on attempt {attempt}: {e}")
+                    self.logger.error(f"Proxy connection test failed on attempt {attempt}: {e}")
                     return False
                 await asyncio.sleep(2 * attempt)
 

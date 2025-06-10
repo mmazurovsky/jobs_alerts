@@ -10,4 +10,5 @@ requests>=2.31.0
 pytz
 rx>=3.0.1
 apscheduler>=3.10.0
+httpx
 # Add any other dependencies as needed 

@@ -164,8 +164,7 @@ class JobListing:
     job_type: str
     timestamp: str
 
-@dataclass
-class ShortJobListing:
+class ShortJobListing(CustomBaseModel):
     title: str
     company: str
     location: str
@@ -266,8 +265,8 @@ class SearchJobsParams(BaseModel):
     keywords: str = Field(..., min_length=1)
     location: str = Field(..., min_length=1)
     time_period: str = Field(..., min_length=1)
-    job_type: list[str] = Field(..., min_length=1)
-    remote_type: list[str] = Field(..., min_length=1)
+    job_types: list[str] = Field(default_factory=list)
+    remote_types: list[str] = Field(default_factory=list)
 
     @classmethod
     def __get_validators__(cls):

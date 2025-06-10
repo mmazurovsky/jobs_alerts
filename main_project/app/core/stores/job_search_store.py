@@ -17,6 +17,7 @@ class JobSearchStore:
     async def connect(self):
         self.collection = self.mongo_connection.db.job_searches
         await self.collection.create_index("id", unique=True)
+        await self.collection.create_index("user_id", unique=False)
 
     async def get_user_searches(self, user_id: int) -> List[JobSearchOut]:
         if not self.mongo_connection._connected:
@@ -70,4 +71,17 @@ class JobSearchStore:
             logger.info(f"Saved job search {job_search.id} to MongoDB")
         except Exception as e:
             logger.error(f"Error saving job search to MongoDB: {e}")
-            raise 
+            raise
+
+    async def get_search_by_id(self, search_id: str):
+        if not self.mongo_connection._connected:
+            raise ServerSelectionTimeoutError("Not connected to MongoDB")
+        try:
+            doc = await self.collection.find_one({"id": search_id})
+            if doc:
+                doc.pop('_id', None)
+                return JobSearchOut(**doc)
+            return None
+        except Exception as e:
+            logger.error(f"Error getting job search by id: {e}")
+            return None 
