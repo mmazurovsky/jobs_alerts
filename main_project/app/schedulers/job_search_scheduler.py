@@ -32,9 +32,68 @@ class JobSearchScheduler:
         self._main_loop = None
     
     async def initialize(self) -> None:
-        """Initialize the scheduler."""
-        await self.start()
-    
+        """Initialize the scheduler and add default jobs."""
+        logger.info("Initializing job search scheduler...")
+        try:
+            await self.start()
+            await self._add_default_jobs()
+            logger.info("Job search scheduler initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize scheduler: {e}")
+            raise
+
+    async def _add_default_jobs(self) -> None:
+        """Add default scheduled jobs."""
+        # Every 5 minutes: Check for pending job searches
+        self.scheduler.add_job(
+            self._run_pending_job_searches_wrapper,
+            'interval',
+            minutes=5,
+            id='check_pending_jobs',
+            replace_existing=True,
+            max_instances=1
+        )
+
+        # Every hour: Process expired subscriptions
+        self.scheduler.add_job(
+            self._process_expired_subscriptions_wrapper,
+            'interval',
+            hours=1,
+            id='process_expired_subscriptions',
+            replace_existing=True,
+            max_instances=1
+        )
+
+        # Every 6 hours: Payment recovery
+        self.scheduler.add_job(
+            self._payment_recovery_wrapper,
+            'interval',
+            hours=6,
+            id='payment_recovery',
+            replace_existing=True,
+            max_instances=1
+        )
+
+        logger.info("Default scheduled jobs added")
+
+    async def _process_expired_subscriptions_wrapper(self) -> None:
+        """Process expired subscriptions with proper error handling."""
+        try:
+            from main_project.app.core.container import get_container
+            container = get_container()
+            await container.premium_service.process_expired_subscriptions()
+        except Exception as e:
+            logger.error(f"Error processing expired subscriptions: {e}")
+
+    async def _payment_recovery_wrapper(self) -> None:
+        """Recover orphaned payments with proper error handling."""
+        try:
+            from main_project.app.core.container import get_container
+            container = get_container()
+            await container.payment_recovery_service.recover_orphaned_payments()
+        except Exception as e:
+            logger.error(f"Error in payment recovery: {e}")
+
     async def start(self) -> None:
         """Start the scheduler."""
         # Store the main event loop
@@ -163,3 +222,43 @@ class JobSearchScheduler:
         else:
             log_data["response_text"] = response.text
             logger.error(f"Failed to trigger scraper job: {log_data}") 
+
+    async def _run_pending_job_searches_wrapper(self) -> None:
+        """Wrapper for running pending job searches with error handling."""
+        try:
+            from main_project.app.core.container import get_container
+            container = get_container()
+            
+            # Get all active job searches from database
+            all_searches = await container.job_search_store.get_all_searches()
+            active_searches = [search for search in all_searches if getattr(search, 'is_active', True)]
+            
+            logger.info(f"Running {len(active_searches)} active job searches")
+            
+            # Process active searches with concurrency limit
+            tasks = []
+            for search in active_searches:
+                # Check if it's time to run this search based on its time period
+                if self._should_run_search(search):
+                    task = asyncio.create_task(self._run_single_search_safe(search))
+                    tasks.append(task)
+                    
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+                
+        except Exception as e:
+            logger.error(f"Error in run pending job searches: {e}")
+
+    async def _run_single_search_safe(self, search: JobSearchOut) -> None:
+        """Run a single search with error handling and concurrency control."""
+        async with self._semaphore:
+            try:
+                await self.trigger_scraper_job_and_log(search)
+            except Exception as e:
+                logger.error(f"Error running search {search.id}: {e}")
+
+    def _should_run_search(self, search: JobSearchOut) -> bool:
+        """Determine if a search should be run based on its time period."""
+        # For now, run all searches every time the scheduled job runs
+        # This could be optimized to track last run times
+        return True 

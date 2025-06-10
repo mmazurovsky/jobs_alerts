@@ -84,4 +84,81 @@ class JobSearchStore:
             return None
         except Exception as e:
             logger.error(f"Error getting job search by id: {e}")
-            return None 
+            return None
+
+    async def get_active_job_count(self, user_id: int) -> int:
+        """Get count of active job searches for user."""
+        if not self.mongo_connection._connected:
+            raise ServerSelectionTimeoutError("Not connected to MongoDB")
+        
+        try:
+            count = await self.collection.count_documents({
+                "user_id": user_id,
+                "is_active": True
+            })
+            return count
+        except Exception as e:
+            logger.error(f"Error getting active job count for user {user_id}: {e}")
+            return 0
+        
+    async def deactivate_excess_searches(self, user_id: int, keep_count: int = 1) -> int:
+        """Deactivate job searches beyond the keep_count, keeping the oldest ones."""
+        if not self.mongo_connection._connected:
+            raise ServerSelectionTimeoutError("Not connected to MongoDB")
+        
+        try:
+            # Get all user's job searches sorted by creation date
+            cursor = self.collection.find(
+                {"user_id": user_id, "is_active": True}
+            ).sort("created_at", 1)  # Oldest first
+            
+            searches = []
+            async for doc in cursor:
+                searches.append(doc)
+                
+            if len(searches) <= keep_count:
+                return 0
+                
+            # Keep the first `keep_count` searches, deactivate the rest
+            searches_to_deactivate = searches[keep_count:]
+            search_ids = [search["id"] for search in searches_to_deactivate]
+            
+            result = await self.collection.update_many(
+                {"id": {"$in": search_ids}},
+                {"$set": {"is_active": False}}
+            )
+            
+            logger.info(f"Deactivated {result.modified_count} excess searches for user {user_id}")
+            return result.modified_count
+        except Exception as e:
+            logger.error(f"Error deactivating excess searches for user {user_id}: {e}")
+            return 0
+        
+    async def reactivate_user_searches(self, user_id: int, max_count: int = 12) -> int:
+        """Reactivate user's job searches up to max_count."""
+        if not self.mongo_connection._connected:
+            raise ServerSelectionTimeoutError("Not connected to MongoDB")
+        
+        try:
+            # Get inactive searches sorted by creation date (oldest first)
+            cursor = self.collection.find(
+                {"user_id": user_id, "is_active": False}
+            ).sort("created_at", 1).limit(max_count)
+            
+            search_ids = []
+            async for doc in cursor:
+                search_ids.append(doc["id"])
+                
+            if not search_ids:
+                return 0
+                
+            result = await self.collection.update_many(
+                {"id": {"$in": search_ids}},
+                {"$set": {"is_active": True}}
+            )
+            
+            logger.info(f"Reactivated {result.modified_count} searches for user {user_id}")
+            return result.modified_count
+        except Exception as e:
+            logger.error(f"Error reactivating searches for user {user_id}: {e}")
+            return 0 

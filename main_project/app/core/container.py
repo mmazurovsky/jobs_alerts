@@ -12,6 +12,10 @@ from main_project.app.core.job_search_manager import JobSearchManager
 from shared.data import StreamManager
 from main_project.app.core.stores.job_search_store import JobSearchStore
 from main_project.app.core.stores.sent_jobs_store import SentJobsStore
+from main_project.app.core.stores.user_subscription_store import UserSubscriptionStore
+from main_project.app.core.stores.payment_transaction_store import PaymentTransactionStore
+from main_project.app.services.premium_service import PremiumService
+from main_project.app.services.payment_handler_service import PaymentHandlerService, PaymentRecoveryService
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +32,11 @@ class Container:
         self._telegram_bot: Optional['TelegramBot'] = None
         self._scheduler: Optional[JobSearchScheduler] = None
         self._stream_manager: Optional[StreamManager] = None
+        self._user_subscription_store: Optional[UserSubscriptionStore] = None
+        self._payment_transaction_store: Optional[PaymentTransactionStore] = None
+        self._premium_service: Optional[PremiumService] = None
+        self._payment_handler_service: Optional[PaymentHandlerService] = None
+        self._payment_recovery_service: Optional[PaymentRecoveryService] = None
     
     @property
     def config(self) -> Config:
@@ -58,7 +67,10 @@ class Container:
     def job_search_manager(self) -> JobSearchManager:
         """Get the job search manager instance."""
         if not self._job_search_manager:
-            self._job_search_manager = JobSearchManager(job_search_store=self.job_search_store, job_search_scheduler=self.scheduler)
+            self._job_search_manager = JobSearchManager(
+                job_search_store=self.job_search_store,
+                sent_jobs_store=self.sent_jobs_store
+            )
         return self._job_search_manager
     
     @property
@@ -71,7 +83,9 @@ class Container:
             self._telegram_bot = TelegramBot(
                 token=token,
                 stream_manager=self.stream_manager,
-                job_search_manager=self.job_search_manager
+                job_search_manager=self.job_search_manager,
+                premium_service=self.premium_service,
+                payment_handler_service=self.payment_handler_service
             )
         return self._telegram_bot
     
@@ -91,14 +105,50 @@ class Container:
             )
         return self._scheduler
     
-
+    @property
+    def user_subscription_store(self) -> UserSubscriptionStore:
+        if not self._user_subscription_store:
+            self._user_subscription_store = UserSubscriptionStore(self.mongo_connection)
+        return self._user_subscription_store
+    
+    @property
+    def payment_transaction_store(self) -> PaymentTransactionStore:
+        if not self._payment_transaction_store:
+            self._payment_transaction_store = PaymentTransactionStore(self.mongo_connection)
+        return self._payment_transaction_store
+    
+    @property
+    def premium_service(self) -> PremiumService:
+        if not self._premium_service:
+            self._premium_service = PremiumService(
+                user_subscription_store=self.user_subscription_store,
+                job_search_store=self.job_search_store
+            )
+        return self._premium_service
+    
+    @property
+    def payment_handler_service(self) -> PaymentHandlerService:
+        if not self._payment_handler_service:
+            self._payment_handler_service = PaymentHandlerService(
+                payment_store=self.payment_transaction_store,
+                subscription_store=self.user_subscription_store,
+                premium_service=self.premium_service
+            )
+        return self._payment_handler_service
+    
+    @property
+    def payment_recovery_service(self) -> PaymentRecoveryService:
+        if not self._payment_recovery_service:
+            self._payment_recovery_service = PaymentRecoveryService(
+                payment_store=self.payment_transaction_store,
+                payment_handler_service=self.payment_handler_service
+            )
+        return self._payment_recovery_service
     
     async def initialize(self) -> None:
         """Initialize all services."""
         try:
-            await self.mongo_connection.connect()
-            await self.job_search_store.connect()
-            await self.sent_jobs_store.connect()
+            await self.connect_all()
             await self.telegram_bot.initialize()
             await self.scheduler.initialize()
             await self.job_search_manager.initialize()
@@ -106,6 +156,14 @@ class Container:
         except Exception as e:
             logger.error(f"Error initializing services: {e}")
             raise
+    
+    async def connect_all(self) -> None:
+        """Connect all stores to their respective databases."""
+        await self.mongo_connection.connect()
+        await self.job_search_store.connect()
+        await self.sent_jobs_store.connect()
+        await self.user_subscription_store.connect()
+        await self.payment_transaction_store.connect()
     
     async def shutdown(self) -> None:
         """Shutdown all services."""

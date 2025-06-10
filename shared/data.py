@@ -1,13 +1,14 @@
 """
 Data models and enums for the application.
 """
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
+from datetime import datetime, timezone, timedelta
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Union
 from pydantic import BaseModel, Field, field_validator
 from rx.subject import Subject
 import logging
+import re
 
 from apscheduler.triggers.cron import CronTrigger
 
@@ -203,25 +204,91 @@ class JobSearchIn(CustomBaseModel):
         }
     }
 
-class JobSearchOut(CustomBaseModel):
-    """Configuration for a job search."""
-    id: str = Field(..., description="Required unique identifier for the job search")
+@dataclass
+class UserSubscription:
+    user_id: int
+    subscription_type: str  # "trial", "premium_week", "premium_month"
+    start_date: datetime
+    end_date: datetime
+    is_active: bool
+    telegram_payment_charge_id: Optional[str] = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def model_dump(self, mode: str = "python") -> Dict[str, Any]:
+        """Convert to dictionary for MongoDB storage."""
+        data = {
+            "user_id": self.user_id,
+            "subscription_type": self.subscription_type,
+            "start_date": self.start_date.isoformat() if mode == "json" else self.start_date,
+            "end_date": self.end_date.isoformat() if mode == "json" else self.end_date,
+            "is_active": self.is_active,
+            "telegram_payment_charge_id": self.telegram_payment_charge_id,
+            "created_at": self.created_at.isoformat() if mode == "json" else self.created_at,
+            "updated_at": self.updated_at.isoformat() if mode == "json" else self.updated_at,
+        }
+        return data
+
+@dataclass 
+class PaymentTransaction:
+    user_id: int
+    transaction_id: str
+    amount_stars: int
+    subscription_type: str
+    status: str  # "pending", "processing", "completed", "failed", "refunded"
+    telegram_payment_charge_id: Optional[str] = None
+    invoice_payload: Optional[str] = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def model_dump(self, mode: str = "python") -> Dict[str, Any]:
+        """Convert to dictionary for MongoDB storage."""
+        data = {
+            "user_id": self.user_id,
+            "transaction_id": self.transaction_id,
+            "amount_stars": self.amount_stars,
+            "subscription_type": self.subscription_type,
+            "status": self.status,
+            "telegram_payment_charge_id": self.telegram_payment_charge_id,
+            "invoice_payload": self.invoice_payload,
+            "created_at": self.created_at.isoformat() if mode == "json" else self.created_at,
+            "updated_at": self.updated_at.isoformat() if mode == "json" else self.updated_at,
+        }
+        return data
+
+@dataclass
+class JobSearchOut:
+    id: str
     job_title: str
     location: str
     job_types: List[JobType]
     remote_types: List[RemoteType]
     time_period: TimePeriod
-    user_id: int  # Telegram user ID
-    blacklist: List[str] = []  # List of strings to blacklist from job titles
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    user_id: int
+    blacklist: List[str]
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    is_active: bool = True  # NEW FIELD: Whether job search is active
+
+    def model_dump(self, mode: str = "python") -> Dict[str, Any]:
+        """Convert to dictionary for MongoDB storage."""
+        data = {
+            "id": self.id,
+            "job_title": self.job_title,
+            "location": self.location,
+            "job_types": [jt.name for jt in self.job_types] if mode == "json" else [jt.name for jt in self.job_types],
+            "remote_types": [rt.name for rt in self.remote_types] if mode == "json" else [rt.name for rt in self.remote_types],
+            "time_period": self.time_period.name if mode == "json" else self.time_period.name,
+            "user_id": self.user_id,
+            "blacklist": self.blacklist,
+            "created_at": self.created_at.isoformat() if mode == "json" else self.created_at,
+            "is_active": self.is_active,
+        }
+        return data
 
     def to_log_string(self) -> str:
-        return (
-            f"id={self.id}, title={self.job_title}, location={self.location}, "
-            f"job_types={[jt.label for jt in self.job_types]}, "
-            f"remote_types={[rt.label for rt in self.remote_types]}, "
-            f"time_period={self.time_period.display_name}"
-        )
+        job_types_str = ", ".join([jt.label for jt in self.job_types])
+        remote_types_str = ", ".join([rt.label for rt in self.remote_types])
+        return f"Job Search {self.id}: '{self.job_title}' in '{self.location}' | Types: {job_types_str} | Remote: {remote_types_str} | Frequency: {self.time_period.display_name} | Active: {self.is_active}"
 
 class StreamType(Enum):
     """Types of events in the stream."""

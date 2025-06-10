@@ -1,3 +1,7 @@
+change data classes to use pydantic
+not sure of _run_pending_job_searches_wrapper
+
+
 add premium
 hide some options behind premium
 add only 7 days trial period with limited features
@@ -7,6 +11,8 @@ if cant delete return that it was not deleted instead of success
 
 only run during the day
 fix cron for jobs
+
+
 
 
 add description parsing

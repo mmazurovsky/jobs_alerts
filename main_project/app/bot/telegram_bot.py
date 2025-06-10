@@ -4,7 +4,7 @@ Telegram bot module.
 import logging
 import os
 from typing import Dict, List, Optional
-from telegram import Update, Message
+from telegram import Update, Message, InlineKeyboardButton, InlineKeyboardMarkup, PreCheckoutQuery, SuccessfulPayment
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -12,6 +12,8 @@ from telegram.ext import (
     ConversationHandler,
     MessageHandler,
     filters,
+    PreCheckoutQueryHandler,
+    CallbackQueryHandler,
 )
 from telegram.constants import ParseMode
 from datetime import datetime
@@ -23,6 +25,8 @@ from shared.data import (
     job_types_list, remote_types_list, time_periods_list
 )
 from main_project.app.core.job_search_manager import JobSearchManager
+from main_project.app.services.premium_service import PremiumService
+from main_project.app.services.payment_handler_service import PaymentHandlerService
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +41,20 @@ except (TypeError, ValueError):
 class TelegramBot:
     """Telegram bot for managing job searches."""
     
-    def __init__(self, token: str, stream_manager: StreamManager, job_search_manager: JobSearchManager):
-        """Initialize the bot with token and MongoDB manager."""
+    def __init__(
+        self, 
+        token: str, 
+        stream_manager: StreamManager, 
+        job_search_manager: JobSearchManager,
+        premium_service: PremiumService,
+        payment_handler_service: PaymentHandlerService
+    ):
+        """Initialize the bot with token and services."""
         self.token = token
         self.stream_manager = stream_manager
         self.job_search_manager = job_search_manager
+        self.premium_service = premium_service
+        self.payment_handler_service = payment_handler_service
         self.application = Application.builder().token(token).build()
         self._setup_handlers()
 
@@ -61,6 +74,12 @@ class TelegramBot:
         self.application.add_handler(CommandHandler("list", self.list_searches))
         self.application.add_handler(CommandHandler("delete", self.delete_search))
         self.application.add_handler(CommandHandler("newRaw", self.new_raw_search))
+        self.application.add_handler(CommandHandler("premium", self.premium_info))
+        
+        # Payment handlers
+        self.application.add_handler(PreCheckoutQueryHandler(self.pre_checkout_callback))
+        self.application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, self.successful_payment_callback))
+        self.application.add_handler(CallbackQueryHandler(self.payment_button_callback))
         
         # Conversation handler for creating new job searches
         conv_handler = ConversationHandler(
@@ -80,7 +99,8 @@ class TelegramBot:
                 CommandHandler("list", self.list_searches),
                 CommandHandler("delete", self.delete_search),
                 CommandHandler("help", self.help),
-                CommandHandler("start", self.start)
+                CommandHandler("start", self.start),
+                CommandHandler("premium", self.premium_info)
             ],
             per_message=False
         )
@@ -105,6 +125,7 @@ class TelegramBot:
             "/newRaw - Create a new job search with a single command (advanced)\n"
             "/list - List your job searches\n"
             "/delete - Delete a job search\n"
+            "/premium - View premium subscription options\n"
             "/help - Show this help message\n\n"
             "*Advanced: /newRaw usage*\n"
             "/newRaw <job_title>;<location>;<job_type>;<remote_type>;<time_period>[;<blacklist>]\n"
@@ -132,6 +153,9 @@ class TelegramBot:
                 job_types = ", ".join(t.label for t in search.job_types)
                 remote_types = ", ".join(t.label for t in search.remote_types)
                 blacklist_str = ", ".join(search.blacklist) if search.blacklist else None
+                status_icon = "✅" if getattr(search, 'is_active', True) else "⏸️"
+                status_text = "Active" if getattr(search, 'is_active', True) else "Paused"
+                
                 message += (
                     f"ID: {search.id}\n"
                     f"Title: {search.job_title}\n"
@@ -139,6 +163,7 @@ class TelegramBot:
                     f"Job Types: {job_types}\n"
                     f"Remote Types: {remote_types}\n"
                     f"Check Frequency: {search.time_period.display_name}\n"
+                    f"Status: {status_icon} {status_text}\n"
                 )
                 if blacklist_str:
                     message += f"Blacklist: {blacklist_str}\n"
@@ -184,11 +209,35 @@ class TelegramBot:
     async def new_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Start the conversation for creating a new job search."""
         self._clear_conversation_state(context)
+        
+        # Check premium limits
+        user_id = update.effective_user.id
+        can_create, error_message = await self.premium_service.check_user_can_create_job(user_id)
+        
+        if not can_create:
+            if "trial" in error_message.lower() or "upgrade to premium" in error_message.lower():
+                # Add premium upgrade buttons
+                keyboard = [[
+                    InlineKeyboardButton("⭐ Upgrade to Premium", callback_data="buy_premium_month")
+                ]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                await update.message.reply_text(
+                    error_message + "\n\nUpgrade to premium for unlimited job searches!",
+                    reply_markup=reply_markup
+                )
+            else:
+                await update.message.reply_text(error_message)
+            return ConversationHandler.END
+            
+        # Create trial subscription if first-time user
+        await self.premium_service.create_trial_if_first_user(user_id)
+        
         await update.message.reply_text(
             "Let's create a new job search! Please enter the job title.\n\n"
             "Examples:\n"
-            "• Software Engineer\n"
-            "• Data Scientist"
+            "Go Developer\n"
+            "Engineering Manager"
         )
         return TITLE
     
@@ -335,6 +384,14 @@ class TelegramBot:
             await update.message.reply_text("Please type 'yes' to confirm or 'no' to cancel.")
             return CONFIRM
         try:
+            # Check premium limits again before creating
+            user_id = update.effective_user.id
+            can_create, error_message = await self.premium_service.check_user_can_create_job(user_id)
+            
+            if not can_create:
+                await update.message.reply_text(f"❌ Cannot create job search: {error_message}")
+                return ConversationHandler.END
+            
             job_title = context.user_data['title']
             location = context.user_data['location']
             job_types = context.user_data['job_types']
@@ -500,6 +557,17 @@ class TelegramBot:
 
     async def new_raw_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
+            # Check premium limits first
+            user_id = update.effective_user.id
+            can_create, error_message = await self.premium_service.check_user_can_create_job(user_id)
+            
+            if not can_create:
+                await update.message.reply_text(f"❌ Cannot create job search: {error_message}")
+                return
+                
+            # Create trial subscription if first-time user
+            await self.premium_service.create_trial_if_first_user(user_id)
+            
             raw_input = update.message.text.split('/newRaw ')[1].strip()
             parts = raw_input.split(';')
             if len(parts) < 5 or len(parts) > 6:
@@ -556,4 +624,122 @@ class TelegramBot:
                 "- Remote types: On-site, Remote, Hybrid\n"
                 "- Time periods: 5 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours\n"
                 "- Blacklist: Optional, comma-separated words/phrases to exclude from job titles"
+            )
+
+    # Premium and payment handlers
+    async def premium_info(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show premium subscription information."""
+        self._clear_conversation_state(context)
+        try:
+            user_id = update.effective_user.id
+            status = await self.premium_service.get_premium_status(user_id)
+            prices = await self.payment_handler_service.get_subscription_prices()
+            
+            message = (
+                "💎 **Premium Subscription**\n\n"
+                f"**Your Current Status:**\n"
+                f"Plan: {status['plan_name']}\n"
+                f"Status: {status['status']}\n"
+                f"Active Searches: {status['active_searches']}/{status['max_searches']}\n"
+            )
+            
+            if status['expires_at']:
+                message += f"Expires: {status['expires_at']}\n"
+                if status['days_remaining'] is not None:
+                    message += f"Days Remaining: {status['days_remaining']}\n"
+            
+            message += (
+                "\n**Premium Features:**\n"
+                "• Up to 12 active job searches\n"
+                "• Priority support\n"
+                "• Advanced filtering options\n"
+                "\n**Pricing:**\n"
+            )
+            
+            for sub_type, price_info in prices.items():
+                message += f"• {price_info['title']}: {price_info['stars']} ⭐\n"
+            
+            keyboard = []
+            if status['can_upgrade'] or status['can_renew']:
+                keyboard.append([
+                    InlineKeyboardButton("⭐ 1 Week (350 ⭐)", callback_data="buy_premium_week"),
+                    InlineKeyboardButton("⭐ 1 Month (500 ⭐)", callback_data="buy_premium_month")
+                ])
+            
+            reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+            
+            await update.message.reply_text(
+                message,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup
+            )
+            
+        except Exception as e:
+            logger.error(f"Error showing premium info: {e}")
+            await update.message.reply_text(
+                "❌ Error loading premium information. Please try again later."
+            )
+
+    async def payment_button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle payment button clicks."""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            user_id = update.effective_user.id
+            data = query.data
+            
+            if data.startswith("buy_premium_"):
+                subscription_type = data.replace("buy_", "")
+                
+                # Create invoice
+                invoice_data = await self.payment_handler_service.create_premium_invoice(
+                    user_id, subscription_type
+                )
+                
+                await context.bot.send_invoice(
+                    chat_id=user_id,
+                    **invoice_data
+                )
+                
+        except ValueError as e:
+            await query.edit_message_text(f"❌ {str(e)}")
+        except Exception as e:
+            logger.error(f"Error processing payment button: {e}")
+            await query.edit_message_text("❌ Error processing payment. Please try again later.")
+
+    async def pre_checkout_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle pre-checkout queries."""
+        query = update.pre_checkout_query
+        
+        try:
+            # Validate the payment
+            is_valid = await self.payment_handler_service.handle_pre_checkout_query(query)
+            await query.answer(ok=is_valid)
+            
+        except Exception as e:
+            logger.error(f"Pre-checkout error: {e}")
+            await query.answer(ok=False, error_message="Payment validation failed")
+
+    async def successful_payment_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle successful payments."""
+        payment = update.message.successful_payment
+        user_id = update.effective_user.id
+        
+        try:
+            await self.payment_handler_service.handle_successful_payment(payment, user_id)
+            
+            await update.message.reply_text(
+                "🎉 **Payment Successful!**\n\n"
+                "Your premium subscription has been activated!\n"
+                "You can now create up to 12 job searches.\n\n"
+                "Use /premium to check your subscription status."
+            )
+            
+        except Exception as e:
+            logger.error(f"Payment processing error: {e}")
+            await update.message.reply_text(
+                "⚠️ **Payment Received**\n\n"
+                "We received your payment but there was an issue activating your subscription.\n"
+                "Please contact support - your payment will be processed manually."
             ) 
