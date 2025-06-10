@@ -40,16 +40,9 @@ class LinkedInScraperGuest:
     _playwright = None
     _browser_lock = asyncio.Lock()
     
-    def __init__(self, name: Optional[str] = None, proxy_config: Optional[Dict[str, str]] = None, keywords: Optional[str] = None, location: Optional[str] = None):
-        # Add keywords and location to logger name for context
-        context = []
-        if keywords:
-            context.append(str(keywords))
-        if location:
-            context.append(str(location))
-        context_str = ".".join(context)
-        logger_name = f"linkedin_scraper_guest{f'.{name}' if name else ''}{f'.{context_str}' if context_str else ''}"
-        self.logger = logging.getLogger(logger_name)
+    def __init__(self, name: Optional[str] = None, proxy_config: Optional[Dict[str, str]] = None):
+        # Logger will be set dynamically in search_jobs
+        self.logger = logging.getLogger(f"linkedin_scraper_guest{f'.{name}' if name else ''}")
         self.name = name or "guest"
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
@@ -302,9 +295,9 @@ class LinkedInScraperGuest:
         self.logger.info("Closed Playwright context for guest scraping.")
 
     @classmethod
-    async def create_new_session(cls, *args, proxy_config=None, keywords=None, location=None, **kwargs):
+    async def create_new_session(cls, *args, proxy_config=None, **kwargs):
         """Create a new browser context session for a job search."""
-        instance = cls(*args, proxy_config=proxy_config, keywords=keywords, location=location, **kwargs)
+        instance = cls(*args, proxy_config=proxy_config, **kwargs)
         await instance._initialize()
         return instance
 
@@ -318,8 +311,20 @@ class LinkedInScraperGuest:
         time_period: Optional[TimePeriod] = None,
         max_jobs: Optional[int] = None,
         blacklist: Optional[List[str]] = None,
+        user_id: Optional[str] = None,
     ) -> List[ShortJobListing]:
-        """Search for jobs with a timeout to prevent hanging."""
+        # Set logger name dynamically for this search
+        context = []
+        if keywords:
+            context.append(str(keywords))
+        if location:
+            context.append(str(location))
+        if user_id:
+            context.append(str(user_id))
+        context_str = ".".join(context)
+        logger_name = f"linkedin_scraper_guest{f'.{context_str}' if context_str else ''}"
+        self.logger = logging.getLogger(logger_name)
+        self._patch_logger()
         try:
             # Set a timeout for the entire search operation (5 minutes)
             return await self._search_jobs_internal(
@@ -337,6 +342,8 @@ class LinkedInScraperGuest:
                     await self._watchdog_task
                 except asyncio.CancelledError:
                     pass
+            # Always cleanup resources after job search
+            await self.close()
 
     async def _restart_session(self):
         await self._cleanup()
