@@ -105,7 +105,7 @@ async def search_jobs(
                 remote_types=parsed["remote_types"],
                 user_id=user_id,
             )
-            logger.info(f"[search_jobs] Finished job for user_id={user_id}, job_search_id={job_search_id}, found {len(jobs) if jobs else 0} jobs")
+            logger.info(f"[search_jobs] Finished job for user_id={user_id}, keywords={parsed['keywords']}, location={parsed['location']}, job_search_id={job_search_id}, found {len(jobs) if jobs else 0} jobs")
             async with httpx.AsyncClient() as client:
                 await client.post(callback_url, json={
                     "job_search_id": job_search_id,
