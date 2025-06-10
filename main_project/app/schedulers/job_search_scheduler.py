@@ -148,8 +148,8 @@ class JobSearchScheduler:
         params = SearchJobsParams(
             keywords=job_search.job_title,
             location=job_search.location,
-            job_type=log_data["job_types"],
-            remote_type=log_data["remote_types"],
+            job_types=log_data["job_types"],
+            remote_types=log_data["remote_types"],
             time_period=log_data["time_period"],
         ).model_dump(exclude_none=True)
         params["callback_url"] = callback_url
