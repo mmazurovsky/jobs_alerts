@@ -49,23 +49,15 @@ class LinkedInScraperGuest:
         self.page: Optional[Page] = None
         self._last_log_time = time.time()
         self._watchdog_task = None
-        self._patch_logger()
         self.proxy_config = proxy_config or self._get_default_proxy_config()
         self._recent_logs = deque(maxlen=50)
-        class MemoryLogHandler(logging.Handler):
+        class LastLogTimeHandler(logging.Handler):
+            def __init__(inner_self, parent):
+                super().__init__()
+                inner_self.parent = parent
             def emit(inner_self, record):
-                msg = self.logger.handlers[0].format(record) if self.logger.handlers else record.getMessage()
-                self._recent_logs.append(msg)
-        self.logger.addHandler(MemoryLogHandler())
-
-    def _patch_logger(self):
-        """Patch the logger to update last log time on every log."""
-        orig_handle = self.logger.handle
-        parent = self
-        def handle(record):
-            parent._last_log_time = time.time()
-            orig_handle(record)
-        self.logger.handle = handle
+                inner_self.parent._last_log_time = time.time()
+        self.logger.addHandler(LastLogTimeHandler(self))
 
     async def _watchdog(self):
         self.logger.info("Watchdog started.")
@@ -323,7 +315,6 @@ class LinkedInScraperGuest:
         context_str = ".".join(context)
         logger_name = f"linkedin_scraper_guest{f'.{context_str}' if context_str else ''}"
         self.logger = logging.getLogger(logger_name)
-        self._patch_logger()
         try:
             # Set a timeout for the entire search operation (5 minutes)
             return await self._search_jobs_internal(
@@ -473,13 +464,8 @@ class LinkedInScraperGuest:
 
             # Chunk 4: Pre-filter "no-results" check
             try:
-                # Wait for jobs container to load before checking for no-results section
-                await self._random_delay(2, 4)
-                await self.page.wait_for_selector('.jobs-search__results-list', timeout=10000)
-                self.logger.info("Checking for no-results section before applying filters...")
-                no_results_section = await self.page.query_selector('section.no-results')
-                if no_results_section:
-                    self.logger.info("No jobs found - detected 'no-results' section before filters. Skipping filter application.")
+                found = await self._wait_for_results_list_with_retries(context='pre-filter', max_retries=max_retries, min_sleep=2, max_sleep=8, timeout=15000)
+                if not found:
                     return []
             except Exception as pre_filter_check_error:
                 if attempt == max_retries:
@@ -554,32 +540,8 @@ class LinkedInScraperGuest:
 
             # Chunk 7: Post-filter "no-results" check
             try:
-                # Check for no results again after applying filters
-                self.logger.info("Checking for no-results section after applying filters...")
-                no_results_section = None
-                max_retries_inner = 3
-                for attempt_retry in range(1, max_retries_inner + 1):
-                    try:
-                        await self._random_delay(2, 5)
-                        await self.page.wait_for_selector('.jobs-search__results-list', timeout=10000)
-                        no_results_section = await self.page.query_selector('section.no-results')
-                        break
-                    except Exception as e:
-                        self.logger.error(f"Attempt {attempt_retry}: Error checking for no-results section: {e}")
-                        if attempt_retry < max_retries_inner:
-                            await asyncio.sleep(1.5 * attempt_retry)
-                        else:
-                            # Log page state before raising
-                            try:
-                                current_url = self.page.url
-                                html_snippet = await self.page.content()
-                                self.logger.error(f"Page state on failure (URL): {current_url}")
-                                self.logger.error(f"Page state on failure (HTML snippet): {html_snippet[:2000]}")
-                            except Exception as log_e:
-                                self.logger.error(f"Failed to log page state: {log_e}")
-                            raise
-                if no_results_section:
-                    self.logger.info("No jobs found after applying filters - detected 'no-results' section")
+                found = await self._wait_for_results_list_with_retries(context='post-filter', max_retries=max_retries, min_sleep=2, max_sleep=8, timeout=15000)
+                if not found:
                     return []
             except Exception as post_filter_check_error:
                 if attempt == max_retries:
@@ -593,16 +555,16 @@ class LinkedInScraperGuest:
 
             # Chunk 8: Results container wait and scrolling
             try:
-                # Wait for jobs container to load
-                self.logger.info("Waiting for .jobs-search__results-list container after filters...")
-                try:
-                    await self.page.wait_for_selector('.jobs-search__results-list', timeout=60000)
-                except Exception as wait_error:
-                    self.logger.error(f"Timeout or error waiting for .jobs-search__results-list: {wait_error}")
-                    html = await self.page.content()
-                    self.logger.error(f"Page HTML (first 2000 chars): {html[:2000]}")
-                    self.logger.error(f"Timeout or error waiting for .jobs-search__results-list: {wait_error}")
-                    return []
+                # # Wait for jobs container to load
+                # self.logger.info("Waiting for .jobs-search__results-list container after filters...")
+                # try:
+                #     await self.page.wait_for_selector('.jobs-search__results-list', timeout=60000)
+                # except Exception as wait_error:
+                #     self.logger.error(f"Timeout or error waiting for .jobs-search__results-list: {wait_error}")
+                #     html = await self.page.content()
+                #     self.logger.error(f"Page HTML (first 2000 chars): {html[:2000]}")
+                #     self.logger.error(f"Timeout or error waiting for .jobs-search__results-list: {wait_error}")
+                #     return []
                 container = await self.page.query_selector('.jobs-search__results-list')
                 if container:
                     self.logger.info(".jobs-search__results-list container found.")
@@ -964,3 +926,33 @@ class LinkedInScraperGuest:
             if cls._playwright is not None:
                 await cls._playwright.stop()
                 cls._playwright = None 
+
+    async def _wait_for_results_list_with_retries(self, context: str, max_retries: int = 3, min_sleep: float = 2.0, max_sleep: float = 8.0, timeout: int = 15000) -> bool:
+        """
+        Wait for the .jobs-search__results-list container with retries and random sleep.
+        Also checks for the no-results section.
+        Returns True if results list found, False if no-results section found or not found after retries.
+        """
+        no_results_selector = 'section.core-section-container.my-3.no-results'
+        for attempt in range(1, max_retries + 1):
+            try:
+                self.logger.info(f"[{context}] Attempt {attempt}: Waiting for .jobs-search__results-list...")
+                await self._random_delay(min_sleep, max_sleep)
+                # Check for no-results section first
+                no_results_section = await self.page.query_selector(no_results_selector)
+                if no_results_section:
+                    self.logger.info(f"[{context}] No results section detected: '{no_results_selector}' (returning immediately)")
+                    return False  # Return immediately, do not retry
+                await self.page.wait_for_selector('.jobs-search__results-list', timeout=timeout)
+                self.logger.info(f"[{context}] .jobs-search__results-list found.")
+                return True
+            except Exception as e:
+                self.logger.error(f"[{context}] Attempt {attempt}: .jobs-search__results-list not found: {e}")
+        url = self.page.url if self.page else None
+        self.logger.error(f"[{context}] .jobs-search__results-list not found after {max_retries} attempts. Current URL: {url}")
+        try:
+            html = await self.page.content()
+            self.logger.error(f"[{context}] Page HTML (first 2000 chars): {html[:2000]}")
+        except Exception as html_error:
+            self.logger.error(f"[{context}] Failed to get page HTML or URL: {html_error}")
+        return False 
