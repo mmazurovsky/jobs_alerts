@@ -232,12 +232,13 @@ class JobSearchOut(CustomBaseModel):
     id: str = Field(..., description="Required unique identifier for the job search")
     job_title: str
     location: str
-    job_types: List[JobType]
-    remote_types: List[RemoteType]
+    job_types: List[JobType] = []
+    remote_types: List[RemoteType] = []
     time_period: TimePeriod
     user_id: int  # Telegram user ID
     blacklist: List[str] = []  # List of strings to blacklist from job titles
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    filter_text: Optional[str] = None
 
     def to_log_string(self) -> str:
         return (
@@ -295,8 +296,6 @@ class SearchJobsParams(BaseModel):
     callback_url: Optional[str] = None
     job_search_id: Optional[str] = None
     user_id: Optional[int] = None
-    max_jobs: Optional[int] = None
-    blacklist: List[str] = Field(default_factory=list)
 
     @classmethod
     def __get_validators__(cls):

@@ -91,9 +91,7 @@ class JobSearchManager:
                 location=search_in.location,
                 job_types=[jt.label for jt in search_in.job_types],
                 remote_types=[rt.label for rt in search_in.remote_types],
-                time_period="24 hours",  # Use 24 hours for one-time search
-                max_jobs=100,  # Higher limit for one-time search
-                blacklist=search_in.blacklist,
+                time_period="1 week",  
                 user_id=user_id,
                 filter_text=search_in.filter_text
             )

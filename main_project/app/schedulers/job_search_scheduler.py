@@ -156,7 +156,6 @@ class JobSearchScheduler:
             callback_url=callback_url,
             job_search_id=job_search.id,
             user_id=job_search.user_id,
-            blacklist=getattr(job_search, 'blacklist', []),
         )
         
         response = await search_jobs_via_scraper(params)
