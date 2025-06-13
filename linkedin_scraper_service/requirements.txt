@@ -1,6 +1,5 @@
 fastapi==0.115.12
 uvicorn==0.34.3
-uvicorn[standard]
 pydantic>=2.0.0
 playwright==1.42.0
 playwright-stealth
@@ -11,4 +10,7 @@ pytz
 rx>=3.0.1
 apscheduler>=3.10.0
 httpx
+litellm==1.56.5
+langdetect==1.0.9
+googletrans==4.0.2
 # Add any other dependencies as needed 

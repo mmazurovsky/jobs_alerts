@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import List, Optional, Dict
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext
-from shared.data import JobType, RemoteType, TimePeriod, ShortJobListing, StreamEvent, StreamType
+from shared.data import JobType, RemoteType, TimePeriod, ShortJobListing, StreamEvent, StreamType, FullJobListing
 import time
 import random
 from urllib.parse import urlparse, urlunparse, quote_plus, urlencode
@@ -13,6 +13,7 @@ from datetime import datetime, timezone, timedelta
 import pytz
 import traceback
 from collections import deque
+from llm.litellm_client import LiteLLMClient
 
 class LinkedInScraperGuest:
     """LinkedIn job scraper for public/guest access (no login)."""
@@ -51,6 +52,8 @@ class LinkedInScraperGuest:
         self._watchdog_task = None
         self.proxy_config = proxy_config or self._get_default_proxy_config()
         self._recent_logs = deque(maxlen=50)
+        self.llm_client = LiteLLMClient()
+        
         class LastLogTimeHandler(logging.Handler):
             def __init__(inner_self, parent):
                 super().__init__()
@@ -301,7 +304,8 @@ class LinkedInScraperGuest:
         max_jobs: Optional[int] = None,
         blacklist: Optional[List[str]] = None,
         user_id: Optional[str] = None,
-    ) -> List[ShortJobListing]:
+        filter_text: Optional[str] = None,
+    ) -> List[FullJobListing]:
         # Set logger name dynamically for this search
         context = []
         if keywords:
@@ -317,8 +321,8 @@ class LinkedInScraperGuest:
             # Set a timeout for the entire search operation (5 minutes)
             return await self._search_jobs_internal(
                     keywords, location, job_types, 
-                    remote_types, time_period, max_jobs, blacklist
-            )
+                    remote_types, time_period, max_jobs, blacklist, filter_text
+                )
         except Exception as e:
             self.logger.error(f"Search for '{keywords}' failed: {e}")
             return []
@@ -376,16 +380,27 @@ class LinkedInScraperGuest:
                 
                 # Extract additional fields for logging (not saved to ShortJobListing)
                 description_el = await self.page.query_selector('[class*=description] > section > div')
-                description = await description_el.inner_text() if description_el else ''
+                description_text = await description_el.inner_text() if description_el else ''
                 
                 criteria_el = await self.page.query_selector('[class*=_job-criteria-list]')
-                criteria = await criteria_el.inner_text() if criteria_el else ''
+                criteria_text = await criteria_el.inner_text() if criteria_el else ''
+                
+                # Build combined description (criteria + description)
+                description_parts = []
+                if criteria_text:
+                    # Convert criteria to single line format
+                    criteria_formatted = criteria_text.replace('\n', ', ').strip()
+                    description_parts.append(criteria_formatted)
+                if description_text:
+                    description_parts.append(description_text)
+                
+                combined_description = '\n'.join(description_parts)
                 
                 # Log additional fields
-                if description:
-                    self.logger.info(f"Job {job_id} description: {description[:500]}...")
-                if criteria:
-                    self.logger.info(f"Job {job_id} criteria: {criteria}")
+                if description_text:
+                    self.logger.info(f"Job {job_id} description: {description_text[:500]}...")
+                if criteria_text:
+                    self.logger.info(f"Job {job_id} criteria: {criteria_text}")
                 
                 # Validate that essential fields are not empty
                 if not title.strip() or not company.strip() or not created_ago.strip():
@@ -403,6 +418,7 @@ class LinkedInScraperGuest:
                     location=location.strip(),
                     link=public_url,
                     created_ago=created_ago.strip(),
+                    description=combined_description
                 )
                 
             except Exception as e:
@@ -423,7 +439,9 @@ class LinkedInScraperGuest:
         return None
 
     async def _get_job_details_bulk(self, job_ids: list[str]) -> list[ShortJobListing]:
-        """Fetch job details for a list of job ids."""
+        """
+        Fetch job details for multiple job IDs and return ShortJobListing objects.
+        """
         results = []
         for job_id in job_ids:
             job = await self._get_job_details(job_id)
@@ -443,7 +461,8 @@ class LinkedInScraperGuest:
         time_period: Optional[TimePeriod] = None,
         max_jobs: Optional[int] = None,
         blacklist: Optional[List[str]] = None,
-    ) -> List[ShortJobListing]:
+        filter_text: Optional[str] = None,
+    ) -> List[FullJobListing]:
         """Search for jobs using LinkedIn API endpoint with pagination."""
         self._watchdog_task = asyncio.create_task(self._watchdog())
         self.logger.info(f"Starting job search for keywords='{keywords}', location='{location}'")
@@ -571,7 +590,9 @@ class LinkedInScraperGuest:
             return []
             
         # Get job details for all collected IDs
-        results = await self._get_job_details_bulk(list(all_job_ids))
+        results = await self._get_job_details_with_llm_filtering(
+            list(all_job_ids), keywords, job_types, remote_types, location, filter_text
+        )
         self.logger.info(f"Successfully extracted {len(results)} job details from {len(all_job_ids)} job IDs")
         
         return results
@@ -890,3 +911,53 @@ class LinkedInScraperGuest:
         except Exception as html_error:
             self.logger.error(f"[{context}] Failed to get page HTML or URL: {html_error}")
         return False 
+
+    async def _get_job_details_with_llm_filtering(
+        self,
+        job_ids: List[str],
+        keywords: str,
+        job_types: Optional[List[JobType]] = None,
+        remote_types: Optional[List[RemoteType]] = None,
+        location: Optional[str] = None,
+        filter_text: Optional[str] = None
+    ) -> List[FullJobListing]:
+        """
+        Fetch job details and process them through LLM for filtering and scoring.
+        Returns FullJobListing objects with techstack and compatibility scores.
+        """
+        # First get all job details
+        jobs = await self._get_job_details_bulk(job_ids)
+        if not jobs:
+            return []
+        
+        # Process through LLM - the client now returns FullJobListing objects directly
+        try:
+            filtered_jobs = await self.llm_client.filter_jobs(
+                jobs=jobs,
+                keywords=keywords,
+                job_types=job_types,
+                remote_types=remote_types,
+                location=location,
+                filter_text=filter_text
+            )
+            
+            self.logger.info(f"LLM processing completed: {len(filtered_jobs)} jobs filtered and sorted from {len(filtered_jobs)} total")
+            return filtered_jobs
+            
+        except Exception as e:
+            self.logger.error(f"LLM processing failed: {e}")
+            # Fallback: create FullJobListing without LLM enhancement
+            fallback_jobs = [
+                FullJobListing(
+                    title=job.title,
+                    company=job.company,
+                    location=job.location,
+                    link=job.link,
+                    created_ago=job.created_ago,
+                    techstack=[],
+                    compatibility_score=0
+                )
+                for job in jobs
+            ]
+            
+            return fallback_jobs 

@@ -8,4 +8,5 @@ setup(
         "pydantic>=2.0.0",
     ],
     python_requires=">=3.10",
+    description="Shared code for all projects",
 ) 

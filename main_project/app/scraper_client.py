@@ -6,6 +6,20 @@ from typing import Any
 SCRAPER_BASE_URL = os.getenv("SCRAPER_SERVICE_URL")
 
 async def search_jobs_via_scraper(params: dict[str, Any]) -> Any:
+    """
+    Search jobs via scraper service.
+    
+    params should include:
+    - keywords: str
+    - location: Optional[str]
+    - job_types: Optional[List[str]]
+    - remote_types: Optional[List[str]]
+    - time_period: Optional[str]
+    - max_jobs: Optional[int]
+    - blacklist: Optional[List[str]]
+    - user_id: Optional[str]
+    - filter_text: Optional[str]  # New LLM filtering parameter
+    """
     async with httpx.AsyncClient() as client:
         response = await client.post(f"{SCRAPER_BASE_URL}/search_jobs", json=params)
         return response

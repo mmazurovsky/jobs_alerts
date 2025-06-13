@@ -170,6 +170,16 @@ class ShortJobListing(CustomBaseModel):
     location: str
     link: str
     created_ago: str
+    description: str = ""
+
+class FullJobListing(CustomBaseModel):
+    title: str
+    company: str
+    location: str
+    link: str
+    created_ago: str
+    techstack: List[str]
+    compatibility_score: int  # 0-100
 
 class JobSearchRemove(CustomBaseModel):
     """Data for removing a job search from Telegram bot."""
