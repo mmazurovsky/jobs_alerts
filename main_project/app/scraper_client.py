@@ -1,27 +1,23 @@
 import httpx
 import os
 from typing import Any
+from shared.data import SearchJobsParams
 
 # Use environment variable or default to localhost for local development
 SCRAPER_BASE_URL = os.getenv("SCRAPER_SERVICE_URL")
 
-async def search_jobs_via_scraper(params: dict[str, Any]) -> Any:
+async def search_jobs_via_scraper(params: SearchJobsParams) -> Any:
     """
     Search jobs via scraper service.
     
-    params should include:
-    - keywords: str
-    - location: Optional[str]
-    - job_types: Optional[List[str]]
-    - remote_types: Optional[List[str]]
-    - time_period: Optional[str]
-    - max_jobs: Optional[int]
-    - blacklist: Optional[List[str]]
-    - user_id: Optional[str]
-    - filter_text: Optional[str]  # New LLM filtering parameter
+    Args:
+        params: SearchJobsParams containing all search parameters
     """
+    # Convert SearchJobsParams to JSON
+    json_data = params.model_dump(exclude_none=True)
+    
     async with httpx.AsyncClient() as client:
-        response = await client.post(f"{SCRAPER_BASE_URL}/search_jobs", json=params)
+        response = await client.post(f"{SCRAPER_BASE_URL}/search_jobs", json=json_data)
         return response
 
 async def check_proxy_connection_via_scraper() -> dict[str, Any]:

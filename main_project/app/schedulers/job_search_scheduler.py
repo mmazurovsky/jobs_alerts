@@ -145,17 +145,20 @@ class JobSearchScheduler:
         # Build callback URL by appending the path to the base URL from env
         base_url = os.getenv("CALLBACK_URL")
         callback_url = base_url.rstrip("/") + "/job_results_callback"
+        
         params = SearchJobsParams(
             keywords=job_search.job_title,
             location=job_search.location,
             job_types=log_data["job_types"],
             remote_types=log_data["remote_types"],
             time_period=log_data["time_period"],
-            filter_text=job_search.filter_text,
-        ).model_dump(exclude_none=True)
-        params["callback_url"] = callback_url
-        params["job_search_id"] = job_search.id
-        params["user_id"] = job_search.user_id
+            filter_text=getattr(job_search, 'filter_text', None),
+            callback_url=callback_url,
+            job_search_id=job_search.id,
+            user_id=job_search.user_id,
+            blacklist=getattr(job_search, 'blacklist', []),
+        )
+        
         response = await search_jobs_via_scraper(params)
         log_data["callback_url"] = callback_url
         log_data["status_code"] = response.status_code
