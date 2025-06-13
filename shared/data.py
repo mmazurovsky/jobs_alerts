@@ -179,7 +179,8 @@ class FullJobListing(CustomBaseModel):
     link: str
     created_ago: str
     techstack: List[str]
-    compatibility_score: int  # 0-100
+    compatibility_score: Optional[int] = None  # 0-100
+    filter_reason: Optional[str] = None
 
 class JobSearchRemove(CustomBaseModel):
     """Data for removing a job search from Telegram bot."""

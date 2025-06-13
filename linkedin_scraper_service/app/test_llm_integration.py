@@ -92,7 +92,7 @@ async def test_llm_client():
     
     # Test filtering
     try:
-        results = await client.filter_jobs(
+        results = await client.enrich_jobs(
             jobs=jobs,
             keywords=keywords,
             job_types=[full_time_job_type],
@@ -106,6 +106,7 @@ async def test_llm_client():
             print(f"  Job: {result.title}")
             print(f"    Company: {result.company}")
             print(f"    Score: {result.compatibility_score}")
+            print(f"    Filter Reason: {result.filter_reason}")
             print(f"    Tech Stack: {result.techstack}")
             print(f"    Link: {result.link}")
             print()

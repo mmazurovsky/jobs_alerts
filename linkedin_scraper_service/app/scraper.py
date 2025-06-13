@@ -932,7 +932,7 @@ class LinkedInScraperGuest:
         
         # Process through LLM - the client now returns FullJobListing objects directly
         try:
-            filtered_jobs = await self.llm_client.filter_jobs(
+            filtered_jobs = await self.llm_client.enrich_jobs(
                 jobs=jobs,
                 keywords=keywords,
                 job_types=job_types,
@@ -940,6 +940,8 @@ class LinkedInScraperGuest:
                 location=location,
                 filter_text=filter_text
             )
+
+            filtered_jobs = [job for job in filtered_jobs if job.compatibility_score is not None and job.compatibility_score > 30]
             
             self.logger.info(f"LLM processing completed: {len(filtered_jobs)} jobs filtered and sorted from {len(filtered_jobs)} total")
             return filtered_jobs

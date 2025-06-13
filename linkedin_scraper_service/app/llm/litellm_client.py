@@ -7,6 +7,7 @@ from shared.data import ShortJobListing, JobType, RemoteType, FullJobListing
 from litellm import acompletion
 from langdetect import detect
 from googletrans import Translator
+from pydantic import Field
 _translator = Translator()
 
 
@@ -36,13 +37,12 @@ class LiteLLMClient:
         self.max_input_tokens = 16000  # Leave room for response tokens
         self.estimated_tokens_per_char = 0.25  # Conservative estimate for English text
         self.job_description_max_length = 2000  # Consistent truncation limit
-        self.min_compatibility_score = 30
         
         
         if not self.api_key:
             self.logger.warning("DEEPSEEK_API_KEY not found in environment variables")
     
-    async def filter_jobs(
+    async def enrich_jobs(
         self,
         jobs: List[ShortJobListing],
         keywords: str,
@@ -77,8 +77,8 @@ class LiteLLMClient:
             # Pre-translate all job descriptions and titles to English (async)
             jobs_english = []
             for job in jobs:
-                desc_en = await ensure_english(job.description)
                 title_en = await ensure_english(job.title)
+                desc_en = await ensure_english(job.description)
                 jobs_english.append(
                     ShortJobListing(
                         title=title_en,
@@ -113,9 +113,8 @@ class LiteLLMClient:
                     await asyncio.sleep(0.5)
             
             # Filter out jobs with low compatibility_score 
-            filtered_results = [job for job in all_results if job.compatibility_score >= self.min_compatibility_score]
-            filtered_results.sort(key=lambda x: x.compatibility_score, reverse=True)
-            return filtered_results
+            all_results.sort(key=lambda x: x.compatibility_score, reverse=True)
+            return all_results
             
         except Exception as e:
             self.logger.error(f"LLM filtering failed: {e}")
@@ -282,12 +281,14 @@ Return ONLY a valid JSON array with this exact structure (no markdown, no extra 
   {{
     "job_id": "0",
     "compatibility_score": 85,
-    "techstack": ["Python", "React", "AWS", "Docker"]
+    "techstack": ["Python", "React", "AWS", "Docker"],
+    "filter_reason": null
   }},
   {{
     "job_id": "1", 
-    "compatibility_score": 72,
-    "techstack": ["Java", "Spring Boot", "Kubernetes"]
+    "compatibility_score": 0,
+    "techstack": ["Java", "Spring Boot", "Kubernetes"],
+    "filter_reason": "Requires German language"
   }}
 ]
 
@@ -295,7 +296,11 @@ REQUIREMENTS:
 - job_id: string index (0, 1, 2, etc.) matching job order above
 - compatibility_score: integer 0-100 based on evaluation criteria
 - techstack: array of technology/skill strings extracted from job description
-- Include ALL jobs, even with low scores (minimum score 0)
+- filter_reason: null if job is not filtered out, otherwise a short explanation (e.g., 'Requires German language', 'On-site only', etc.)
+- If a job is filtered out (compatibility_score 0), filter_reason MUST be provided and explain why.
+- Only assign a high compatibility_score if ALL requirements and negative constraints in the filter text are satisfied.
+- If a job description contains any requirement that is explicitly forbidden in the filter text (e.g., 'should not have requirement to know German language'), assign a compatibility_score of 0 and explain in filter_reason what requirement was violated.
+- Do NOT ignore negative requirements, even if the job matches other criteria.
 - NO markdown formatting in response
 - NO additional text or explanations"""
     
@@ -333,7 +338,7 @@ REQUIREMENTS:
                     self.logger.warning(f"Skipping invalid result (not a dict): {result}")
                     continue
                     
-                required_keys = ['job_id', 'compatibility_score', 'techstack']
+                required_keys = ['job_id', 'compatibility_score', 'techstack', 'filter_reason']
                 if not all(key in result for key in required_keys):
                     self.logger.warning(f"Skipping result missing required keys: {result}")
                     continue
@@ -349,9 +354,14 @@ REQUIREMENTS:
                         techstack = []
                     techstack = [str(item).strip() for item in techstack if str(item).strip()]
                     
+                    filter_reason = result.get('filter_reason')
+                    if filter_reason is not None and isinstance(filter_reason, str) and not filter_reason.strip():
+                        filter_reason = None
+                    
                     results_by_id[job_id] = {
                         'compatibility_score': score,
-                        'techstack': techstack
+                        'techstack': techstack,
+                        'filter_reason': filter_reason
                     }
                     
                 except (ValueError, TypeError) as e:
@@ -361,7 +371,7 @@ REQUIREMENTS:
             # Create FullJobListing objects
             full_jobs = []
             for i, job in enumerate(original_jobs):
-                llm_result = results_by_id.get(i, {'compatibility_score': 0, 'techstack': []})
+                llm_result = results_by_id.get(i, {'compatibility_score': 0, 'techstack': [], 'filter_reason': None})
                 
                 full_job = FullJobListing(
                     title=job.title,
@@ -370,7 +380,8 @@ REQUIREMENTS:
                     link=job.link,
                     created_ago=job.created_ago,
                     techstack=llm_result['techstack'],
-                    compatibility_score=llm_result['compatibility_score']
+                    compatibility_score=llm_result['compatibility_score'],
+                    filter_reason=llm_result['filter_reason']
                 )
                 full_jobs.append(full_job)
             
@@ -391,7 +402,7 @@ REQUIREMENTS:
                 link=job.link,
                 created_ago=job.created_ago,
                 techstack=[],
-                compatibility_score=20  # Neutral score
+                compatibility_score=None 
             )
             for job in jobs
         ] 
