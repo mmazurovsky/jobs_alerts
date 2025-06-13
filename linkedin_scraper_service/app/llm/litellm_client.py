@@ -234,26 +234,27 @@ Description: {description}
         
         search_criteria = "\n".join(criteria_parts) if criteria_parts else "No specific criteria provided"
         
-        return f"""You are a senior technical recruiter specializing in job matching. Evaluate jobs against search criteria with focus on accuracy and relevance.
+        return f"""You are a senior technical recruiter specializing in job matching. Enrich jobs with techstack - a list of technologies that are mentioned in the job title and description. Then evaluate jobs against search criteria with focus on accuracy and relevance.
 
 SEARCH CRITERIA:
 {search_criteria}
 
 EVALUATION PRIORITY (in order of importance):
-1. TITLE & KEYWORDS MATCH: Job title similarity to position keywords
-2. DESCRIPTION KEYWORDS: How well job description matches search keywords  
+1. TITLE & KEYWORDS MATCH: Job title similarity to provided keywords
+2. TECHSTACK & KEYWORDS MATCH: Job techstack similarity to provided keywords
 3. REMOTE WORK TYPE: Match between job's remote policy and required remote type
 4. JOB TYPE: Match between job type (full-time, contract, etc.) and requirements
-5. ADDITIONAL REQUIREMENTS: Alignment with freeform filter requirements
+5. DESCRIPTION KEYWORDS: How well job description matches search keywords  
+6. ADDITIONAL REQUIREMENTS: Alignment with freeform filter requirements is necessary
 
 SCORING GUIDELINES:
-- 90-100: Perfect match (title + keywords + all requirements met)
-- 70-89: Strong match (title matches, most requirements met)
-- 50-69: Good match (partial title match or strong description match)
-- 30-49: Weak match (some keywords match but poor overall fit)
+- 90-100: Perfect match (title + keywords + techstack + all requirements met)
+- 70-89: Strong match (partial title match and partial techstack match, most requirements met)
+- 50-69: Good match ((partial title match or partial techstack match) and strong description match)
+- 30-49: Weak match (some title match or some techstack match or some description match but weak overall fit)
 - 0-29: Poor/no match (no significant alignment)
 
-Note: Job titles and descriptions may be in any language, but your response must be in English.
+Note: Job titles and descriptions will be translated to English, your response must always be in English.
 
 JOBS TO EVALUATE:"""
 

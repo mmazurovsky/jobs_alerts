@@ -81,6 +81,15 @@ async def test_llm_client():
             created_ago="6 days ago",
             description=f"Erfahrungsstufe: Mittleres bis Senior-Level. Beschäftigungsart: Vollzeit. Remote: Remote möglich. Wir suchen einen Senior Python Entwickler mit Erfahrung in Django, Flask und AWS. Mindestens 5 Jahre Erfahrung in der Python-Entwicklung sind erforderlich. Deutschkenntnisse auf C1-Niveau sind obligatorisch."
         ),
+
+                        ShortJobListing(
+            title="Senior Fullstack Developer",
+            company="Other Corp",
+            location="Remote",
+            link="https://example.com/job8",
+            created_ago="6 days ago",
+            description=f"Erfahrungsstufe: Mittleres bis Senior-Level. Beschäftigungsart: Vollzeit. Remote: Remote möglich. Wir suchen einen Senior Python Entwickler mit Erfahrung in Django, Flask und AWS. Mindestens 5 Jahre Erfahrung in der Javascript React undPython-Entwicklung sind erforderlich. Englishkenntnisse auf C1-Niveau sind obligatorisch."
+        ),
     ]
     
     # Initialize LLM client

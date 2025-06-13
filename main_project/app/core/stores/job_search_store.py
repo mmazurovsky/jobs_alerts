@@ -1,7 +1,7 @@
 """
 Job search MongoDB store methods.
 """
-from typing import List
+from typing import List, Optional
 from pymongo.errors import ServerSelectionTimeoutError
 from shared.data import JobSearchOut
 from main_project.app.core.mongo_connection import MongoConnection
@@ -73,7 +73,7 @@ class JobSearchStore:
             logger.error(f"Error saving job search to MongoDB: {e}")
             raise
 
-    async def get_search_by_id(self, search_id: str):
+    async def get_search_by_id(self, search_id: str) -> Optional[JobSearchOut]:
         if not self.mongo_connection._connected:
             raise ServerSelectionTimeoutError("Not connected to MongoDB")
         try:

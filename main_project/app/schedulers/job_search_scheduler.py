@@ -151,6 +151,7 @@ class JobSearchScheduler:
             job_types=log_data["job_types"],
             remote_types=log_data["remote_types"],
             time_period=log_data["time_period"],
+            filter_text=job_search.filter_text,
         ).model_dump(exclude_none=True)
         params["callback_url"] = callback_url
         params["job_search_id"] = job_search.id

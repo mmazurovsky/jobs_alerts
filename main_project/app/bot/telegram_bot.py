@@ -112,7 +112,7 @@ class TelegramBot:
             "Available values:\n"
             "- Job types: Full-time, Part-time, Contract, Temporary, Internship\n"
             "- Remote types: On-site, Remote, Hybrid\n"
-            "- Time periods: 5 minutes, 10 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours\n"
+            "- Time periods: 5 minutes, 10 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours, 24 hours\n"
             "- Blacklist: Optional, comma-separated words/phrases to exclude from job titles"
         )
         await update.message.reply_text(help_text)
@@ -510,7 +510,7 @@ class TelegramBot:
                     "Available values:\n"
                     "- Job types: Full-time, Part-time, Contract, Temporary, Internship\n"
                     "- Remote types: On-site, Remote, Hybrid\n"
-                    "- Time periods: 5 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours\n"
+                    "- Time periods: 5 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours, 24 hours\n"
                     "- Blacklist: Optional, comma-separated words/phrases to exclude from job titles"
                 )
                 return
@@ -542,7 +542,7 @@ class TelegramBot:
                 "Available values:\n"
                 "- Job types: Full-time, Part-time, Contract, Temporary, Internship\n"
                 "- Remote types: On-site, Remote, Hybrid\n"
-                "- Time periods: 5 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours\n"
+                "- Time periods: 5 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours, 24 hours\n"
                 "- Blacklist: Optional, comma-separated words/phrases to exclude from job titles"
             )
         except Exception as e:
@@ -554,6 +554,6 @@ class TelegramBot:
                 "Available values:\n"
                 "- Job types: Full-time, Part-time, Contract, Temporary, Internship\n"
                 "- Remote types: On-site, Remote, Hybrid\n"
-                "- Time periods: 5 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours\n"
+                "- Time periods: 5 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours, 24 hours\n"
                 "- Blacklist: Optional, comma-separated words/phrases to exclude from job titles"
             ) 

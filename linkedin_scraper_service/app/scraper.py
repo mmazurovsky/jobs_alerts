@@ -301,7 +301,6 @@ class LinkedInScraperGuest:
         job_types: Optional[List[JobType]] = None,
         remote_types: Optional[List[RemoteType]] = None,
         time_period: Optional[TimePeriod] = None,
-        max_jobs: Optional[int] = None,
         blacklist: Optional[List[str]] = None,
         user_id: Optional[str] = None,
         filter_text: Optional[str] = None,
@@ -321,7 +320,7 @@ class LinkedInScraperGuest:
             # Set a timeout for the entire search operation (5 minutes)
             return await self._search_jobs_internal(
                     keywords, location, job_types, 
-                    remote_types, time_period, max_jobs, blacklist, filter_text
+                    remote_types, time_period, blacklist, filter_text
                 )
         except Exception as e:
             self.logger.error(f"Search for '{keywords}' failed: {e}")
@@ -459,7 +458,6 @@ class LinkedInScraperGuest:
         job_types: Optional[List[JobType]] = None,
         remote_types: Optional[List[RemoteType]] = None,
         time_period: Optional[TimePeriod] = None,
-        max_jobs: Optional[int] = None,
         blacklist: Optional[List[str]] = None,
         filter_text: Optional[str] = None,
     ) -> List[FullJobListing]:
@@ -505,12 +503,12 @@ class LinkedInScraperGuest:
                 
         # Add time period filter (f_TPR)
         if time_period:
-            params["f_TPR"] = self._get_time_period_code(time_period)
+            params["f_TPR"] = time_period.linkedin_code
             
         all_job_ids = set()
-        max_iterations = 5 
+        max_pages_to_scrape = time_period.get_max_pages_to_scrape()
         
-        for iteration in range(max_iterations):
+        for iteration in range(max_pages_to_scrape):
             start_pos = iteration * 10
             params["start"] = start_pos
             
@@ -570,18 +568,9 @@ class LinkedInScraperGuest:
                     self.logger.info(f"Found only {len(job_cards)} jobs on page {iteration + 1}, stopping pagination")
                     break
                     
-                # If we have enough jobs and max_jobs is set, stop early
-                if max_jobs and len(all_job_ids) >= max_jobs:
-                    self.logger.info(f"Collected {len(all_job_ids)} job IDs, reached max_jobs limit of {max_jobs}")
-                    break
-                    
             except Exception as e:
                 self.logger.error(f"Error fetching page {iteration + 1}: {e}")
                 break
-                
-        # Limit to max_jobs if specified
-        if max_jobs and len(all_job_ids) > max_jobs:
-            all_job_ids = set(list(all_job_ids)[:max_jobs])
             
         self.logger.info(f"Total unique job IDs collected: {len(all_job_ids)}")
         
@@ -736,20 +725,6 @@ class LinkedInScraperGuest:
         except Exception as e:
             self.logger.error(f"Failed to extract job details: {e}")
             return None
-
-    def _get_time_period_code(self, time_period: TimePeriod) -> str:
-        # Map seconds to LinkedIn's rXXXXXX code
-        mapping = {
-            300: "r300",         # 5 minutes
-            600: "r600",         # 10 minutes
-            900: "r900",         # 15 minutes
-            1800: "r1800",       # 30 minutes
-            3600: "r3600",       # 1 hour
-            14400: "r14400",     # 4 hours
-            86400: "r86400",     # 24 hours
-            604800: "r604800",   # 7 days
-        }
-        return mapping.get(time_period.seconds, f"r{time_period.seconds}")
 
     async def _close_sign_in_modal(self):
         """Close the LinkedIn sign-in modal if it appears."""

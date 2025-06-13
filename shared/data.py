@@ -21,11 +21,15 @@ from apscheduler.triggers.cron import CronTrigger
 class TimePeriod:
     _instances = {}
 
-    def __init__(self, display_name: str, seconds: int, cron: CronTrigger):
+    def __init__(self, display_name: str, seconds: int, cron: CronTrigger, max_pages_to_scrape: int, linkedin_code: str):
         self.display_name = display_name
         self._seconds = seconds
         self._cron = cron
+        self._max_pages_to_scrape = max_pages_to_scrape
+        self.linkedin_code = linkedin_code
         TimePeriod._instances[display_name.lower()] = self
+
+    
 
     @property
     def seconds(self):
@@ -61,14 +65,22 @@ class TimePeriod:
     def __repr__(self):
         return f"<TimePeriod '{self.display_name}'>"
 
-TimePeriod("5 minutes", 300, CronTrigger(minute='0,5,10,15,20,25,30,35,40,45,50,55'))
-TimePeriod("10 minutes", 600, CronTrigger(minute='0,10,20,30,40,50'))
-TimePeriod("15 minutes", 900, CronTrigger(minute='0,15,30,45'))
-TimePeriod("20 minutes", 1200, CronTrigger(minute='0,20,40'))
-TimePeriod("30 minutes", 1800, CronTrigger(minute='0,30'))
-TimePeriod("1 hour", 3600, CronTrigger(minute='0'))
-TimePeriod("4 hours", 14400, CronTrigger(hour='0,4,8,12,16,20', minute='0'))
-TimePeriod("24 hours", 43200, CronTrigger(hour='0', minute='0'))
+    def get_max_pages_to_scrape(self) -> int:
+        """
+        Returns the maximum number of pages to scrape for this time period (set in constructor).
+        """
+        return self._max_pages_to_scrape
+
+TimePeriod("5 minutes", 300, CronTrigger(minute='0,5,10,15,20,25,30,35,40,45,50,55'), 1, "r300")
+TimePeriod("10 minutes", 600, CronTrigger(minute='0,10,20,30,40,50'), 2, "r600")
+TimePeriod("15 minutes", 900, CronTrigger(minute='0,15,30,45'), 3, "r900")
+TimePeriod("20 minutes", 1200, CronTrigger(minute='0,20,40'), 4, "r1200")
+TimePeriod("30 minutes", 1800, CronTrigger(minute='0,30'), 5, "r1800")
+TimePeriod("1 hour", 3600, CronTrigger(minute='0'), 10, "r3600")
+TimePeriod("4 hours", 14400, CronTrigger(hour='0,4,8,12,16,20', minute='0'), 10, "r14400")
+TimePeriod("24 hours", 43200, CronTrigger(hour='0', minute='0'), 10, "r43200")
+TimePeriod("1 week", 302400, CronTrigger(hour='0', minute='0'), 15, "r302400")
+TimePeriod("1 month", 1209600, CronTrigger(hour='0', minute='0'), 20, "r1209600")
 
 class JobType:
     _instances = {}
@@ -196,6 +208,7 @@ class JobSearchIn(CustomBaseModel):
     time_period: TimePeriod
     user_id: int  # Telegram user ID
     blacklist: List[str] = []  # List of strings to blacklist from job titles
+    filter_text: Optional[str] = None
 
     @field_validator('job_types', 'remote_types', 'time_period')
     @classmethod
@@ -278,6 +291,7 @@ class SearchJobsParams(BaseModel):
     time_period: str = Field(..., min_length=1)
     job_types: list[str] = Field(default_factory=list)
     remote_types: list[str] = Field(default_factory=list)
+    filter_text: Optional[str] = None
 
     @classmethod
     def __get_validators__(cls):
