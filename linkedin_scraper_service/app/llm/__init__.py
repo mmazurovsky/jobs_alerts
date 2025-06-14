@@ -1,1 +1,1 @@
-# LLM integration module 
+"""LLM integration module."""

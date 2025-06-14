@@ -600,17 +600,14 @@ class TelegramBot:
             job_search_data = context.user_data.pop('one_time_search_pending', None)
             if job_search_data:
                 try:
-                    await update.message.reply_text("🔍 Starting deep search... This may take a moment.")
-                    
                     # Execute one-time search
                     await self.job_search_manager.execute_one_time_search(job_search_data, update.effective_user.id)
-                    
-                    await update.message.reply_text("✅ Deep search completed! Check above for results.")
                 except Exception as e:
                     logger.error(f"Error executing one-time search: {e}")
                     await update.message.reply_text(
                         "Sorry, there was an error executing your deep search. Please try again."
                     )
+                await update.message.reply_text("🔍 Starting deep search... This may take a moment. Except results within few minutes.")
             return
         
         # Invalid response

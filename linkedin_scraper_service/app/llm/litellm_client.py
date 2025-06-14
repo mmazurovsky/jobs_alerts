@@ -123,8 +123,6 @@ class LiteLLMClient:
     def _format_job_for_prompt(self, job: ShortJobListing, job_index: int) -> str:
         """Format a single job for inclusion in the LLM prompt."""
         description = job.description[:self.job_description_max_length] if job.description else "No description available"
-        if len(job.description or "") > self.job_description_max_length:
-            description += "..."
         
         return f"""
 Job ID: {job_index}
@@ -234,7 +232,7 @@ Description: {description}
         
         search_criteria = "\n".join(criteria_parts) if criteria_parts else "No specific criteria provided"
         
-        return f"""You are a senior technical recruiter specializing in job matching. Enrich jobs with techstack - a list of technologies that are mentioned in the job title and description. Then evaluate jobs against search criteria with focus on accuracy and relevance.
+        return f"""You are a senior technical recruiter specializing in job matching. Enrich jobs with techstack - a list of technologies that are mentioned in the job title and description ordered by their importance from high to low. Then evaluate jobs against search criteria with focus on accuracy and relevance.
 
 SEARCH CRITERIA:
 {search_criteria}
