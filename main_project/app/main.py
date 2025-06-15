@@ -41,11 +41,21 @@ async def on_startup():
     await container.initialize()
     # Optionally: check proxy connection here if you want
     try:
-        proxy_result = await check_proxy_connection_via_scraper()
-        if proxy_result.get("success"):
-            logger.info("Proxy connection test succeeded via scraper service.")
-        else:
-            logger.error("Proxy connection test failed via scraper service.")
+        max_retries = 5
+        for attempt in range(1, max_retries + 1):
+            try:
+                proxy_result = await check_proxy_connection_via_scraper()
+                if proxy_result.get("success"):
+                    logger.info("Proxy connection test succeeded via scraper service.")
+                    break
+                else:
+                    logger.error("Proxy connection test failed via scraper service.")
+            except Exception as e:
+                logger.error(f"Attempt {attempt}/{max_retries}: Failed to check proxy connection via scraper service: {e}")
+                if attempt < max_retries:
+                    await asyncio.sleep(3)
+                else:
+                    logger.error("Giving up after maximum retry attempts to connect to scraper service.")
     except Exception as e:
         logger.error(f"Failed to check proxy connection via scraper service", exc_info=True)
 
@@ -138,11 +148,21 @@ async def main() -> None:
 
         # Proxy connection check via HTTP
         try:
-            proxy_result = await check_proxy_connection_via_scraper()
-            if proxy_result.get("success"):
-                logger.info("Proxy connection test succeeded via scraper service.")
-            else:
-                logger.error("Proxy connection test failed via scraper service.")
+            max_retries = 10
+            for attempt in range(1, max_retries + 1):
+                try:
+                    proxy_result = await check_proxy_connection_via_scraper()
+                    if proxy_result.get("success"):
+                        logger.info("Proxy connection test succeeded via scraper service.")
+                        break
+                    else:
+                        logger.error("Proxy connection test failed via scraper service.")
+                except Exception as e:
+                    logger.error(f"Attempt {attempt}/{max_retries}: Failed to check proxy connection via scraper service: {e}")
+                    if attempt < max_retries:
+                        await asyncio.sleep(3)
+                    else:
+                        logger.error("Giving up after maximum retry attempts to connect to scraper service.")
         except Exception as e:
             logger.error(f"Failed to check proxy connection via scraper service", exc_info=True)
         
