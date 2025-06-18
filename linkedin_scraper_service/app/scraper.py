@@ -68,7 +68,7 @@ class LinkedInScraperGuest:
             while True:
                 await asyncio.sleep(5)
                 elapsed = time.time() - self._last_log_time
-                if elapsed > 40:
+                if elapsed > 300:
                     self.logger.warning(f"No log messages for {elapsed:.1f} seconds. Attempting to close sign-in modal.")
                     try:
                         await self._close_sign_in_modal()
@@ -340,116 +340,302 @@ class LinkedInScraperGuest:
         await self._cleanup()
         await self._initialize()
 
-    async def _get_job_details(self, job_id: str) -> Optional[ShortJobListing]:
+    async def _safe_get_page_info(self) -> str:
+        """Safely get page information for debugging without raising exceptions."""
+        if not self.page:
+            return "No page object available"
+        
+        try:
+            page_url = self.page.url
+            page_html = await self.page.content()
+            return f"Page URL: {page_url}\nHTML (first 1000 chars): {page_html[:1000]}\nHTML (last 1000 chars): {page_html[-1000:] if len(page_html) > 1000 else page_html}"
+        except Exception as e:
+            return f"Could not retrieve page info (page may be unstable): {e}"
+
+    async def _get_job_details(self, job_id: str, page: Optional[Page] = None) -> Optional[ShortJobListing]:
         """Get detailed job information by job ID with retry logic on timeout."""
+        # Use provided page or create a new one for this request
+        current_page = page or await self.context.new_page()
         max_retries = 2
         
-        for attempt in range(max_retries + 1):
-            try:
-                if attempt > 0:
-                    # Switch to different proxy config for retry
-                    self.logger.info(f"Retry attempt {attempt} for job_id={job_id}, switching proxy config")
-                    old_proxy = self.proxy_config
-                    self.proxy_config = self._get_default_proxy_config()
-                    if self.proxy_config != old_proxy:
-                        self.logger.info(f"Switched proxy from {old_proxy} to {self.proxy_config}")
-                        # Restart session with new proxy
-                        await self._cleanup()
-                        await self._initialize()
+        try:
+            await stealth_async(current_page)
+            
+            for attempt in range(max_retries + 1):
+                try:
+                    if attempt > 0:
+                        # Switch to different proxy config for retry
+                        self.logger.info(f"Retry attempt {attempt} for job_id={job_id}, switching proxy config")
+                        old_proxy = self.proxy_config
+                        self.proxy_config = self._get_default_proxy_config()
+                        if self.proxy_config != old_proxy:
+                            self.logger.info(f"Switched proxy from {old_proxy} to {self.proxy_config}")
+                            # Restart session with new proxy
+                            await self._cleanup()
+                            await self._initialize()
+                            # Create new page after proxy change
+                            if not page:  # Only if we created the page ourselves
+                                await current_page.close()
+                                current_page = await self.context.new_page()
+                                await stealth_async(current_page)
+                        
+                        
+                    api_url = f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
+                    public_url = f"https://www.linkedin.com/jobs/view/{job_id}/"
                     
+                    await current_page.goto(api_url, timeout=30000, wait_until='domcontentloaded')
+                    await self._random_delay(1, 2)  # Reduced delay for parallel processing
                     
-                api_url = f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
-                public_url = f"https://www.linkedin.com/jobs/view/{job_id}/"
-                
-                await self.page.goto(api_url, timeout=30000, wait_until='domcontentloaded')
-                await self._random_delay(3, 5)
-                
-                # Extract job details with updated selectors
-                title_el = await self.page.query_selector('body > section > div > div.top-card-layout__entity-info-container.flex.flex-wrap.papabear\\:flex-nowrap > div > a > h2')
-                title = await title_el.inner_text() if title_el else ''
-                
-                company_el = await self.page.query_selector('body > section > div > div.top-card-layout__entity-info-container.flex.flex-wrap.papabear\\:flex-nowrap > div > h4 > div:nth-child(1) > span:nth-child(1) > a')
-                company = await company_el.inner_text() if company_el else ''
-                
-                location_el = await self.page.query_selector('body > section > div > div.top-card-layout__entity-info-container.flex.flex-wrap.papabear\\:flex-nowrap > div > h4 > div:nth-child(1) > span.topcard__flavor.topcard__flavor--bullet')
-                location = await location_el.inner_text() if location_el else ''
-                
-                created_ago_el = await self.page.query_selector('body > section > div > div.top-card-layout__entity-info-container.flex.flex-wrap.papabear\\:flex-nowrap > div > h4 > div:nth-child(2) > span')
-                created_ago = await created_ago_el.inner_text() if created_ago_el else ''
-                
-                # Extract additional fields for logging (not saved to ShortJobListing)
-                description_el = await self.page.query_selector('[class*=description] > section > div')
-                description_text = await description_el.inner_text() if description_el else ''
-                
-                criteria_el = await self.page.query_selector('[class*=_job-criteria-list]')
-                criteria_text = await criteria_el.inner_text() if criteria_el else ''
-                
-                # Build combined description (criteria + description)
-                description_parts = []
-                if criteria_text:
-                    # Convert criteria to single line format
-                    criteria_formatted = criteria_text.replace('\n', ', ').strip()
-                    description_parts.append(criteria_formatted)
-                if description_text:
-                    description_parts.append(description_text)
-                
-                combined_description = '\n'.join(description_parts)
-                
-                # Log additional fields
-                if description_text:
-                    self.logger.info(f"Job {job_id} description: {description_text[:500]}...")
-                if criteria_text:
-                    self.logger.info(f"Job {job_id} criteria: {criteria_text}")
-                
-                # Validate that essential fields are not empty
-                if not title.strip() or not company.strip() or not created_ago.strip():
-                    self.logger.warning(f"Job {api_url} has empty essential fields: title='{title}', company='{company}', created_ago='{created_ago}'")
-                    page_html = await self.page.content()
-                    self.logger.error(f"Not full data {api_url}, page HTML content (first 1000 chars): {page_html[:1000]}")
-                    safe_filename = api_url.replace('/', '_').replace(':', '_').replace('?', '_').replace('&', '_')
-                    break
-                
-                self.logger.info(f"Successfully extracted job details for {job_id}: title='{title}', company='{company}', location='{location}', created_ago='{created_ago}'")
-                
-                return ShortJobListing(
-                    title=title.strip(),
-                    company=company.strip(),
-                    location=location.strip(),
-                    link=public_url,
-                    created_ago=created_ago.strip(),
-                    description=combined_description
-                )
-                
-            except Exception as e:
-
-                current_url = self.page.url if self.page else api_url
+                    # Extract job details with updated selectors
+                    title_el = await current_page.query_selector('body > section > div > div.top-card-layout__entity-info-container.flex.flex-wrap.papabear\\:flex-nowrap > div > a > h2')
+                    title = await title_el.inner_text() if title_el else ''
                     
-                    # Log HTML content for debugging
-                if self.page:
-                    page_html = await self.page.content()
-                    self.logger.error(f"Error getting job details for {current_url} (attempt {attempt + 1}): {e}")
-                    self.logger.error(f"Error page HTML content (first 1000 chars): {page_html[:1000]}")
-                    self.logger.error(f"Error page HTML content (last 1000 chars): {page_html[-1000:] if len(page_html) > 1000 else page_html}")
-                
-                # If this was the last attempt, return None
-                if attempt == max_retries:
-                    self.logger.error(f"Failed to get job details for {current_url} after {max_retries + 1} attempts")
-                    return None
-        return None
+                    company_el = await current_page.query_selector('body > section > div > div.top-card-layout__entity-info-container.flex.flex-wrap.papabear\\:flex-nowrap > div > h4 > div:nth-child(1) > span:nth-child(1) > a')
+                    company = await company_el.inner_text() if company_el else ''
+                    
+                    location_el = await current_page.query_selector('body > section > div > div.top-card-layout__entity-info-container.flex.flex-wrap.papabear\\:flex-nowrap > div > h4 > div:nth-child(1) > span.topcard__flavor.topcard__flavor--bullet')
+                    location = await location_el.inner_text() if location_el else ''
+                    
+                    created_ago_el = await current_page.query_selector('body > section > div > div.top-card-layout__entity-info-container.flex.flex-wrap.papabear\\:flex-nowrap > div > h4 > div:nth-child(2) > span')
+                    created_ago = await created_ago_el.inner_text() if created_ago_el else ''
+                    
+                    # Extract additional fields for logging (not saved to ShortJobListing)
+                    description_el = await current_page.query_selector('[class*=description] > section > div')
+                    description_text = await description_el.inner_text() if description_el else ''
+                    
+                    criteria_el = await current_page.query_selector('[class*=_job-criteria-list]')
+                    criteria_text = await criteria_el.inner_text() if criteria_el else ''
+                    
+                    # Build combined description (criteria + description)
+                    description_parts = []
+                    if criteria_text:
+                        # Convert criteria to single line format
+                        criteria_formatted = criteria_text.replace('\n', ', ').strip()
+                        description_parts.append(criteria_formatted)
+                    if description_text:
+                        description_parts.append(description_text)
+                    
+                    combined_description = '\n'.join(description_parts)
+                    
+                    # Validate that essential fields are not empty
+                    if not title.strip() or not company.strip() or not created_ago.strip():
+                        self.logger.warning(f"Job {api_url} has empty essential fields: title='{title}', company='{company}', created_ago='{created_ago}'")
+                        # Get page info for debugging but continue trying
+                        page_html = await current_page.content()
+                        self.logger.error(f"Page content (first 1000 chars): {page_html[:1000]}")
+                        break
+                    
+                    # Log success with URL verification
+                    current_url = current_page.url
+                    self.logger.info(f"Successfully extracted job details for job_id={job_id} from URL={current_url}")
+                    self.logger.info(f"  -> title='{title}', company='{company}', location='{location}', created_ago='{created_ago}'")
+                    self.logger.info(f"  -> public_url={public_url}")
+                    
+                    return ShortJobListing(
+                        title=title.strip(),
+                        company=company.strip(),
+                        location=location.strip(),
+                        link=public_url,
+                        created_ago=created_ago.strip(),
+                        description=combined_description
+                    )
+                    
+                except Exception as e:
+                    current_url = current_page.url if current_page else api_url
+                    
+                    self.logger.error(f"Error getting job details for job_id={job_id} from URL={current_url} (attempt {attempt + 1}): {e}")
+                    
+                    # Try to get page info for debugging
+                    try:
+                        page_html = await current_page.content()
+                        self.logger.error(f"Error page content (first 500 chars): {page_html[:500]}")
+                    except:
+                        self.logger.error("Could not retrieve page content for debugging")
+                    
+                    # If this was the last attempt, return None
+                    if attempt == max_retries:
+                        self.logger.error(f"Failed to get job details for job_id={job_id} after {max_retries + 1} attempts")
+                        return None
+            return None
+            
+        finally:
+            # Only close the page if we created it ourselves (not provided)
+            if not page and current_page:
+                try:
+                    await current_page.close()
+                except Exception as e:
+                    self.logger.error(f"Error closing page for job_id={job_id}: {e}")
 
     async def _get_job_details_bulk(self, job_ids: list[str]) -> list[ShortJobListing]:
         """
-        Fetch job details for multiple job IDs and return ShortJobListing objects.
+        Fetch job details for multiple job IDs in parallel by cycling through different 
+        proxy configurations with the same scraper instance.
         """
-        results = []
-        for job_id in job_ids:
-            job = await self._get_job_details(job_id)
-            if job:
-                self.logger.info(f"Job details for job_id={job_id} found: {job}")
-                results.append(job)
+        if not job_ids:
+            return []
+            
+        # Configure parallel processing
+        max_concurrent_tasks = 3  # Number of concurrent tasks (reduced to avoid overwhelming)
+        
+        self.logger.info(f"Processing {len(job_ids)} job IDs with max {max_concurrent_tasks} concurrent tasks")
+        
+        # Create semaphore to limit concurrency
+        semaphore = asyncio.Semaphore(max_concurrent_tasks)
+        
+        # Create tasks for parallel processing with different proxy configs
+        async def process_job_with_proxy_rotation(job_id: str, task_index: int) -> tuple[str, Optional[ShortJobListing]]:
+            async with semaphore:
+                try:
+                    # Rotate proxy config for this task
+                    if task_index % 5 == 0:  # Every 5th task gets a new proxy
+                        new_proxy_config = self._get_default_proxy_config()
+                        await self._update_proxy_config(new_proxy_config)
+                        await asyncio.sleep(1)  # Brief delay after proxy change
+                    
+                    # Create a dedicated page for this job to avoid interference
+                    job_page = await self.context.new_page()
+                    await stealth_async(job_page)
+                    
+                    try:
+                        # Process the job with dedicated page - return tuple with job_id to maintain mapping
+                        job = await self._get_job_details(job_id, page=job_page)
+                        if job:
+                            self.logger.info(f"Task {task_index}: Job details for job_id={job_id} found")
+                            return (job_id, job)
+                        else:
+                            self.logger.warning(f"Task {task_index}: Job details for job_id={job_id} not found")
+                            return (job_id, None)
+                    finally:
+                        # Always close the dedicated page
+                        try:
+                            await job_page.close()
+                        except Exception as e:
+                            self.logger.error(f"Error closing page for task {task_index}, job_id={job_id}: {e}")
+                            
+                except Exception as e:
+                    self.logger.error(f"Task {task_index}: Error processing job_id={job_id}: {e}")
+                    return (job_id, None)
+        
+        # Create tasks for all job IDs
+        tasks = [
+            process_job_with_proxy_rotation(job_id, i) 
+            for i, job_id in enumerate(job_ids)
+        ]
+        
+        # Execute all tasks with controlled concurrency
+        try:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Process results and maintain job_id mapping
+            successful_jobs = []
+            failed_count = 0
+            job_results_dict = {}
+            
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    self.logger.error(f"Job {i+1} failed with exception: {result}")
+                    failed_count += 1
+                elif isinstance(result, tuple) and len(result) == 2:
+                    job_id, job_data = result
+                    job_results_dict[job_id] = job_data
+                    if job_data is not None:
+                        successful_jobs.append(job_data)
+                    else:
+                        failed_count += 1
+                else:
+                    self.logger.warning(f"Job {i+1} returned unexpected result format: {result}")
+                    failed_count += 1
+            
+            # Log the mapping for verification
+            self.logger.info(f"Job ID to result mapping verification:")
+            for job_id in job_ids[:5]:  # Log first 5 for verification
+                result_status = "SUCCESS" if job_results_dict.get(job_id) else "FAILED/MISSING"
+                self.logger.info(f"  job_id={job_id} -> {result_status}")
+            
+            self.logger.info(f"Parallel processing completed: {len(successful_jobs)} successful, {failed_count} failed out of {len(job_ids)} total")
+            return successful_jobs
+            
+        except Exception as e:
+            self.logger.error(f"Error in parallel job details processing: {e}", exc_info=True)
+            return []
+
+    async def _update_proxy_config(self, new_proxy_config: Optional[Dict[str, str]] = None):
+        """Update proxy configuration and restart browser context without full reinitialization."""
+        try:
+            old_proxy = self.proxy_config
+            self.proxy_config = new_proxy_config or self._get_default_proxy_config()
+            
+            if self.proxy_config != old_proxy:
+                self.logger.info(f"Updating proxy config from {old_proxy} to {self.proxy_config}")
+                
+                # Cleanup current context but keep browser
+                if hasattr(self, 'page') and self.page:
+                    await self.page.close()
+                if hasattr(self, 'context') and self.context:
+                    await self.context.close()
+                
+                # Create new context with updated proxy
+                chrome_version = self._get_random_chrome_version()
+                context_options = {
+                    'user_agent': random.choice(self.USER_AGENTS),
+                    'viewport': random.choice(self.VIEWPORT_SIZES),
+                    'locale': 'en-US',
+                    'timezone_id': 'America/New_York',
+                    'geolocation': None,
+                    'permissions': [],
+                    'extra_http_headers': {
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Accept-Encoding': 'gzip, deflate, br',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                        'Connection': 'keep-alive',
+                        'Upgrade-Insecure-Requests': '1',
+                        'Sec-Fetch-Dest': 'document',
+                        'Sec-Fetch-Mode': 'navigate',
+                        'Sec-Fetch-Site': 'none',
+                        'Sec-Fetch-User': '?1',
+                        'Sec-Ch-Ua': f'"Not_A Brand";v="8", "Chromium";v="{chrome_version}", "Google Chrome";v="{chrome_version}"',
+                        'Sec-Ch-Ua-Mobile': '?0',
+                        'Sec-Ch-Ua-Platform': '"Linux"',
+                        'Cache-Control': 'max-age=0',
+                    }
+                }
+                
+                # Add new proxy config
+                if self.proxy_config:
+                    context_options['proxy'] = self.proxy_config
+                    self.logger.info(f"Applied new proxy: {self.proxy_config.get('server', 'configured')}")
+                else:
+                    self.logger.info("Using direct connection (no proxy)")
+                
+                # Create new context with updated proxy
+                self.context = await self.browser.new_context(**context_options)
+                await self.context.add_init_script("""
+                    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                    Object.defineProperty(navigator, 'platform', { get: () => 'Linux x86_64' });
+                    Object.defineProperty(navigator, 'vendor', { get: () => 'Google Inc.' });
+                    Object.defineProperty(navigator, 'vendorSub', { get: () => '' });
+                    Object.defineProperty(navigator, 'productSub', { get: () => '20030107' });
+                    Object.defineProperty(navigator, 'plugins', { get: () => ({ length: 3, 0: { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer' }, 1: { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai' }, 2: { name: 'Native Client', filename: 'internal-nacl-plugin' } }) });
+                    Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+                    window.chrome = { runtime: { onConnect: undefined, onMessage: undefined }, loadTimes: function() { return { commitLoadTime: Date.now() / 1000 - Math.random() * 10, connectionInfo: 'http/1.1', finishDocumentLoadTime: Date.now() / 1000 - Math.random() * 5, finishLoadTime: Date.now() / 1000 - Math.random() * 3, firstPaintAfterLoadTime: 0, firstPaintTime: Date.now() / 1000 - Math.random() * 8, navigationType: 'Other', npnNegotiatedProtocol: 'unknown', requestTime: Date.now() / 1000 - Math.random() * 15, startLoadTime: Date.now() / 1000 - Math.random() * 12, wasAlternateProtocolAvailable: false, wasFetchedViaSpdy: false, wasNpnNegotiated: false }; }, csi: function() { return { pageT: Date.now() - Math.random() * 1000, startE: Date.now() - Math.random() * 2000, tran: 15 }; } };
+                    Object.defineProperty(navigator, 'permissions', { get: () => ({ query: (parameters) => ( parameters.name === 'notifications' ? Promise.resolve({ state: Notification.permission }) : Promise.resolve({ state: 'granted' }) ) }) });
+                    Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+                    Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+                    Object.defineProperty(navigator, 'connection', { get: () => ({ effectiveType: '4g', rtt: 50, downlink: 10 }) });
+                """)
+                
+                # Create new page
+                self.page = await self.context.new_page()
+                await stealth_async(self.page)
+                await self._block_resource_types()
+                
+                self.logger.info("Successfully updated proxy configuration and reinitialized context")
             else:
-                self.logger.error(f"Job details for job_id={job_id} not found")
-        return results
+                self.logger.info("Proxy configuration unchanged, no update needed")
+                
+        except Exception as e:
+            self.logger.error(f"Failed to update proxy configuration: {e}")
+            raise
 
     async def _search_jobs_internal(
         self,
@@ -904,6 +1090,9 @@ class LinkedInScraperGuest:
         jobs = await self._get_job_details_bulk(job_ids)
         if not jobs:
             return []
+        
+        # Log the number of jobs
+        self.logger.info(f"Number of jobs before LLM processing: {len(jobs)}")
         
         # Process through LLM - the client now returns FullJobListing objects directly
         try:

@@ -32,11 +32,11 @@ class LiteLLMClient:
         self.api_key = os.getenv('DEEPSEEK_API_KEY')
         self.model = "deepseek/deepseek-chat"
         self.logger = logging.getLogger(__name__)
-        # Conservative token limits to ensure we don't exceed model limits
-        # DeepSeek-chat has 64k context but we'll be conservative
-        self.max_input_tokens = 16000  # Leave room for response tokens
+        # More conservative token limits to ensure smaller, faster requests
+        # DeepSeek-chat has 64k context but we'll be more conservative for reliability
+        self.max_input_tokens = 8000  # Reduced from 16000 for smaller batches
         self.estimated_tokens_per_char = 0.25  # Conservative estimate for English text
-        self.job_description_max_length = 2000  # Consistent truncation limit
+        self.job_description_max_length = 3000  # Increased to 3000 for more comprehensive analysis
         
         
         if not self.api_key:
@@ -111,9 +111,15 @@ class LiteLLMClient:
                 # Small delay between requests to be respectful
                 if batch_idx < len(job_batches) - 1:
                     await asyncio.sleep(0.5)
+
+            # add log message with title and filter reason for each job
+            for result in all_results:
+                self.logger.info(f"Job: {result.title}, Filter Reason: {result.filter_reason}")
             
             # Filter out jobs with low compatibility_score 
             all_results.sort(key=lambda x: x.compatibility_score, reverse=True)
+            # Number of jobs returned
+            self.logger.info(f"Number of jobs returned after filtering: {len(all_results)}")
             return all_results
             
         except Exception as e:
@@ -150,8 +156,10 @@ Description: {description}
         base_prompt = self._build_base_prompt(keywords, job_types, remote_types, location, filter_text)
         base_tokens = len(base_prompt) * self.estimated_tokens_per_char
         
-        # Reserve tokens for response (estimated ~100 tokens per job for response)
-        available_tokens = self.max_input_tokens - base_tokens - (15 * 100)  # Reserve for max 15 jobs response
+        # Reserve tokens for response (estimated ~80 tokens per job for response)
+        # Estimate how many jobs could potentially fit and reserve accordingly
+        estimated_max_jobs = min(15, self.max_input_tokens // 800)  # Rough estimate: 800 tokens per job
+        available_tokens = self.max_input_tokens - base_tokens - (estimated_max_jobs * 80)
         
         batches = []
         current_batch = []
@@ -202,10 +210,17 @@ Description: {description}
             api_key=self.api_key,
             temperature=0.1,
             max_tokens=4000,
-            timeout=30
+            timeout=120  # Increased from 30 to handle DeepSeek API delays
         )
         
         content = response.choices[0].message.content
+        
+        # Log response details for debugging
+        self.logger.info(f"LLM response received - Length: {len(content)} chars")
+        if hasattr(response, 'usage') and response.usage:
+            self.logger.info(f"Token usage - Prompt: {response.usage.prompt_tokens}, Completion: {response.usage.completion_tokens}, Total: {response.usage.total_tokens}")
+        self.logger.debug(f"Raw LLM response content: {content}")
+        
         return self._parse_llm_response(content, jobs, batch_offset)
     
     def _build_base_prompt(
@@ -238,7 +253,7 @@ SEARCH CRITERIA:
 {search_criteria}
 
 EVALUATION PRIORITY (in order of importance):
-1. TITLE & KEYWORDS MATCH: Job title similarity to provided keywords
+1. TITLE & KEYWORDS MATCH: Job title partial similarity to provided keywords
 2. TECHSTACK & KEYWORDS MATCH: Job techstack similarity to provided keywords
 3. REMOTE WORK TYPE: Match between job's remote policy and required remote type
 4. JOB TYPE: Match between job type (full-time, contract, etc.) and requirements
@@ -246,10 +261,10 @@ EVALUATION PRIORITY (in order of importance):
 6. ADDITIONAL REQUIREMENTS: Alignment with freeform filter requirements is necessary
 
 SCORING GUIDELINES:
-- 90-100: Perfect match (title + keywords + techstack + all requirements met)
-- 70-89: Strong match (partial title match and partial techstack match, most requirements met)
-- 50-69: Good match ((partial title match or partial techstack match) and strong description match)
-- 30-49: Weak match (some title match or some techstack match or some description match but weak overall fit)
+- 90-100: Perfect match (title has some matches with keywords + techstack has matches with keywords + all additional requirements met)
+- 70-89: Strong match (partial title match with keywords and partial techstack match with keywords, most additional requirements met)
+- 50-69: Good match ((partial title match with keywords or partial techstack match with keywords) and strong description match with keywords or additional requirements)
+- 30-49: Weak match (weak title match with keywords or some weak techstack match with keywords or some weak description match with keywords or additional requirements but weak overall fit)
 - 0-29: Poor/no match (no significant alignment)
 
 Note: Job titles and descriptions will be translated to English, your response must always be in English.
