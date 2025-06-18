@@ -293,7 +293,7 @@ class SearchJobsParams(BaseModel):
     job_types: list[str] = Field(default_factory=list)
     remote_types: list[str] = Field(default_factory=list)
     filter_text: Optional[str] = None
-    callback_url: Optional[str] = None
+    callback_url: str
     job_search_id: Optional[str] = None
     user_id: Optional[int] = None
 

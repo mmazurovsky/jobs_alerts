@@ -27,7 +27,7 @@ from main_project.app.core.job_search_manager import JobSearchManager
 logger = logging.getLogger(__name__)
 
 # Conversation states
-TITLE, LOCATION, JOB_TYPES, REMOTE_TYPES, TIME_PERIOD, FILTER_TEXT, CONFIRM = range(7)
+TITLE, LOCATION, JOB_TYPES, REMOTE_TYPES, TIME_PERIOD, FILTER_TEXT, CONFIRM, ONE_TIME_DEEP_SEARCH_CONFIRM = range(8)
 
 try:
     ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID"))
@@ -61,14 +61,17 @@ class TelegramBot:
         self.application.add_handler(CommandHandler("list", self.list_searches))
         self.application.add_handler(CommandHandler("delete", self.delete_search))
         self.application.add_handler(CommandHandler("newRaw", self.new_raw_search))
-        self.application.add_handler(CommandHandler("oneTimeDeepSearch", self.one_time_deep_search))
-        
-        # Message handler for one-time search confirmations
-        self.application.add_handler(MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            self.handle_one_time_search_confirmation
-        ), group=1)
-        
+        # Remove direct add_handler for oneTimeDeepSearch
+        # Add ConversationHandler for one-time deep search
+        one_time_deep_search_conv = ConversationHandler(
+            entry_points=[CommandHandler("oneTimeDeepSearch", self.one_time_deep_search)],
+            states={
+                ONE_TIME_DEEP_SEARCH_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.one_time_deep_search_confirm)],
+            },
+            fallbacks=[CommandHandler("cancel", self.cancel)],
+            per_message=False
+        )
+        self.application.add_handler(one_time_deep_search_conv)
         # Conversation handler for creating new job searches
         conv_handler = ConversationHandler(
             entry_points=[CommandHandler("new", self.new_search)],
@@ -344,15 +347,19 @@ class TelegramBot:
         await update.message.reply_text(msg)
         return CONFIRM
     
+    @staticmethod
+    def is_yes_response(text: str) -> bool:
+        """Return True if the text is a 'yes' response (case-insensitive), else False."""
+        return text.strip().lower() == 'yes'
+
     async def confirm(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        input_text = update.message.text.strip().lower()
-        if input_text == 'no':
+        input_text = update.message.text.strip()
+        if input_text.lower() == 'no':
             await update.message.reply_text("Job search creation cancelled.")
             return ConversationHandler.END
-        if input_text != 'yes':
+        if not self.is_yes_response(input_text):
             await update.message.reply_text("Please type 'yes' to confirm or 'no' to cancel.")
             return CONFIRM
-        
         try:
             # Regular job search creation
             job_title = context.user_data['title']
@@ -585,39 +592,9 @@ class TelegramBot:
                 "- Filter prompt: Optional freeform text (max 300 chars) for LLM-based job filtering"
             )
 
-    async def handle_one_time_search_confirmation(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle confirmations for one-time deep search outside conversation flow."""
-        if 'one_time_search_pending' not in context.user_data:
-            return  # Not a one-time search confirmation
-        
-        input_text = update.message.text.strip().lower()
-        if input_text == 'no':
-            context.user_data.pop('one_time_search_pending', None)
-            await update.message.reply_text("One-time deep search cancelled.")
-            return
-        
-        if input_text == 'yes':
-            job_search_data = context.user_data.pop('one_time_search_pending', None)
-            if job_search_data:
-                try:
-                    # Execute one-time search
-                    await self.job_search_manager.execute_one_time_search(job_search_data, update.effective_user.id)
-                except Exception as e:
-                    logger.error(f"Error executing one-time search: {e}")
-                    await update.message.reply_text(
-                        "Sorry, there was an error executing your deep search. Please try again."
-                    )
-                await update.message.reply_text("🔍 Starting deep search... This may take a moment. Except results within few minutes.")
-            return
-        
-        # Invalid response
-        await update.message.reply_text("Please type 'yes' to confirm or 'no' to cancel the deep search.")
-
-    async def one_time_deep_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle one-time deep search command with required filter prompt."""
-        # Clear any existing conversation state
+    async def one_time_deep_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Handle one-time deep search command with required filter prompt and confirmation state."""
         self._clear_conversation_state(context)
-        
         try:
             raw_input = update.message.text.split('/oneTimeDeepSearch ')[1].strip()
             parts = raw_input.split(';')
@@ -631,40 +608,31 @@ class TelegramBot:
                     "- Remote types: On-site, Remote, Hybrid\n"
                     "- Filter prompt: Required freeform text (max 300 chars) for LLM-based job filtering"
                 )
-                return
-            
+                return ConversationHandler.END
             title, location, job_type, remote_types, filter_text = parts
-            
-            # Validate filter text
             filter_text = filter_text.strip()
             if not filter_text:
                 await update.message.reply_text(
                     "❌ Filter prompt is required for deep search."
                 )
-                return
+                return ConversationHandler.END
             if len(filter_text) > 300:
                 await update.message.reply_text(
                     "❌ Filter prompt is too long. Maximum 300 characters allowed."
                 )
-                return
-            
-            # Parse job parameters
+                return ConversationHandler.END
             job_type_enums = self._parse_job_types(job_type)
             remote_type_enums = self._parse_remote_types(remote_types)
-            
-            # Create JobSearchIn for confirmation
             job_search_data = JobSearchIn(
                 job_title=title.strip(),
                 location=location.strip(),
                 job_types=job_type_enums,
                 remote_types=remote_type_enums,
-                time_period=TimePeriod.parse("1 month"),  #TODO: parse it too from user
+                time_period=TimePeriod.parse("1 month"),  # TODO: parse from user
                 user_id=update.effective_user.id,
                 blacklist=[],
                 filter_text=filter_text
             )
-            
-            # Show confirmation
             msg = (
                 "🔍 One-time Deep Search Confirmation:\n\n"
                 f"Job Title: {job_search_data.job_title}\n"
@@ -675,10 +643,8 @@ class TelegramBot:
                 "This will search immediately and return results. Confirm with 'yes' or cancel with 'no'."
             )
             await update.message.reply_text(msg)
-            
-            # Store search data for confirmation
             context.user_data['one_time_search_pending'] = job_search_data
-            
+            return ONE_TIME_DEEP_SEARCH_CONFIRM
         except ValueError as e:
             await update.message.reply_text(
                 f"❌ Error: {str(e)}\n\n"
@@ -686,10 +652,33 @@ class TelegramBot:
                 "/oneTimeDeepSearch <job_title>;<location>;<job_type(s)>;<remote_type(s)>;<filter_prompt>\n\n"
                 "Example: /oneTimeDeepSearch Python Developer;Switzerland;Full-time;Remote;No hybrid, no German required"
             )
+            return ConversationHandler.END
         except Exception as e:
             await update.message.reply_text(
                 f"❌ Error: {str(e)}\n\n"
                 "Please use the correct format:\n"
                 "/oneTimeDeepSearch <job_title>;<location>;<job_type(s)>;<remote_type(s)>;<filter_prompt>"
                 "Example: /oneTimeDeepSearch Python Developer;Switzerland;Full-time;Remote;No hybrid, no German required"
-            ) 
+            )
+            return ConversationHandler.END
+
+    async def one_time_deep_search_confirm(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        input_text = update.message.text.strip()
+        if input_text.lower() == 'no':
+            context.user_data.pop('one_time_search_pending', None)
+            await update.message.reply_text("One-time deep search cancelled.")
+            return ConversationHandler.END
+        if self.is_yes_response(input_text):
+            job_search_data = context.user_data.pop('one_time_search_pending', None)
+            if job_search_data:
+                try:
+                    await self.job_search_manager.execute_one_time_search(job_search_data, update.effective_user.id)
+                except Exception as e:
+                    logger.error(f"Error executing one-time search: {e}")
+                    await update.message.reply_text(
+                        "Sorry, there was an error executing your deep search. Please try again."
+                    )
+                await update.message.reply_text("🔍 Starting deep search... This may take a moment. Expect results within a few minutes.")
+            return ConversationHandler.END
+        await update.message.reply_text("Please type 'yes' to confirm or 'no' to cancel the deep search.")
+        return ONE_TIME_DEEP_SEARCH_CONFIRM  

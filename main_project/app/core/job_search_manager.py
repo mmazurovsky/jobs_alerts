@@ -2,6 +2,7 @@
 Job search manager for handling user job searches.
 """
 import logging
+import os
 from typing import Dict, List, Optional
 import uuid
 from shared.data import JobSearchOut, JobSearchIn, JobSearchRemove, JobType, RemoteType, StreamManager, TimePeriod, StreamType, StreamEvent, SearchJobsParams
@@ -75,7 +76,7 @@ class JobSearchManager:
             logger.error(f"Error adding job search: {e}")
             raise
     
-    async def execute_one_time_search(self, search_in: JobSearchIn, user_id: int) -> None:
+    async def execute_one_time_search(self, job_search: JobSearchIn, user_id: int) -> None:
         """Execute a one-time search without saving it permanently.
         
         Args:
@@ -83,17 +84,21 @@ class JobSearchManager:
             user_id: Telegram user ID for sending results
         """
         try:
-            logger.info(f"Executing one-time search for user {user_id}: {search_in.job_title} in {search_in.location}")
+            logger.info(f"Executing one-time search for user {user_id}: {job_search.job_title} in {job_search.location}")
+
+            base_url = os.getenv("CALLBACK_URL")
+            callback_url = base_url.rstrip("/") + "/job_results_callback"
             
-            # Create SearchJobsParams object
             params = SearchJobsParams(
-                keywords=search_in.job_title,
-                location=search_in.location,
-                job_types=[jt.label for jt in search_in.job_types],
-                remote_types=[rt.label for rt in search_in.remote_types],
+                keywords=job_search.job_title,
+                location=job_search.location,
+                job_types=[jt.label for jt in job_search.job_types],
+                remote_types=[rt.label for rt in job_search.remote_types],
                 time_period="1 week",  
-                user_id=user_id,
-                filter_text=search_in.filter_text
+                filter_text=getattr(job_search, 'filter_text', None),
+                callback_url=callback_url,
+                job_search_id=None,
+                user_id=job_search.user_id,
             )
             
             # Execute search via scraper
