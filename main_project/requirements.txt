@@ -9,4 +9,5 @@ motor==3.3.2
 pymongo==4.6.1
 rx>=3.2.0
 requests>=2.31.0
+pytz
 # Add any other dependencies as needed 

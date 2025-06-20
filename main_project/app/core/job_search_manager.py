@@ -94,7 +94,7 @@ class JobSearchManager:
                 location=job_search.location,
                 job_types=[jt.label for jt in job_search.job_types],
                 remote_types=[rt.label for rt in job_search.remote_types],
-                time_period="1 week",  
+                time_period="1 month",  
                 filter_text=getattr(job_search, 'filter_text', None),
                 callback_url=callback_url,
                 job_search_id=None,

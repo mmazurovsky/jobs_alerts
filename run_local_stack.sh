@@ -6,12 +6,17 @@ ENVIRONMENT="test"
 
 export ENVIRONMENT
 
+# Create network first if it doesn't exist
+echo "Creating Docker network..."
+docker network create jobs_alerts_network || true
+
 # Start linkedin_scraper_service stack
 echo "Starting linkedin_scraper_service Docker Compose..."
 docker compose -f linkedin_scraper_service/docker-compose.yml up -d --build
 
-# Create network if it doesn't exist
-docker network create jobs_alerts_network || true
+# Wait for scraper service to be ready
+echo "Waiting for scraper service to be ready..."
+sleep 3
 
 # Start main_project stack with .env.test
 echo "Starting main_project Docker Compose..."

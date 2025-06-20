@@ -510,6 +510,7 @@ class TelegramBot:
             user_id = message_data.get("user_id")
             message = message_data.get("message")
             image_path = message_data.get("image_path")
+            
             if image_path and os.path.exists(image_path):
                 with open(image_path, "rb") as img:
                     await self.application.bot.send_photo(
@@ -518,13 +519,75 @@ class TelegramBot:
                         caption=message
                     )
             else:
-                await self.application.bot.send_message(
-                    chat_id=user_id,
-                    text=message, 
-                    parse_mode=None
-                )
+                # Check if message is too long and split if needed
+                await self._send_message_with_splitting(user_id, message)
         except Exception as e:
             logger.error(f"Error sending message: {e}")
+    
+    async def _send_message_with_splitting(self, user_id: int, message: str):
+        """Send a message with automatic splitting if it's too long."""
+        try:
+            # Telegram's message length limit is 4096 characters
+            if len(message) <= 4096:
+                # Send message as-is if it's within the limit
+                await self.application.bot.send_message(
+                    chat_id=user_id,
+                    text=message,
+                    parse_mode=None
+                )
+            else:
+                # Split the message into multiple parts
+                await self._send_long_message_in_parts(user_id, message)
+        except Exception as e:
+            logger.error(f"Error sending message to user {user_id}: {e}")
+    
+    async def _send_long_message_in_parts(self, user_id: int, message: str):
+        """Split a long message into multiple parts and send them."""
+        lines = message.split('\n')
+        current_message = ""
+        part_number = 1
+        
+        for line in lines:
+            # Check if adding this line would exceed the limit
+            test_message = current_message + line + '\n'
+            
+            if len(test_message) > 4096:
+                # Send current message if it's not empty
+                if current_message.strip():
+                    await self.application.bot.send_message(
+                        chat_id=user_id,
+                        text=current_message.rstrip(),
+                        parse_mode=None
+                    )
+                    part_number += 1
+                
+                # Start new message with current line, add part indicator for subsequent parts
+                if part_number > 1:
+                    header = f"📄 Part {part_number}:\n\n"
+                    current_message = header + line + '\n'
+                    
+                    # If even with header it's too long, truncate the line
+                    if len(current_message) > 4096:
+                        max_line_length = 4096 - len(header) - 1  # -1 for newline
+                        truncated_line = line[:max_line_length - 3] + "..."
+                        current_message = header + truncated_line + '\n'
+                else:
+                    current_message = line + '\n'
+                    
+                    # If even a single line is too long, truncate it
+                    if len(current_message) > 4096:
+                        truncated_line = line[:4090] + "..."
+                        current_message = truncated_line + '\n'
+            else:
+                current_message = test_message
+        
+        # Send the last part if it's not empty
+        if current_message.strip():
+            await self.application.bot.send_message(
+                chat_id=user_id,
+                text=current_message.rstrip(),
+                parse_mode=None
+            )
 
     async def new_raw_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         try:

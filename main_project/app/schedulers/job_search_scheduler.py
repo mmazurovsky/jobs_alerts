@@ -11,6 +11,7 @@ import re
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+import pytz
 
 from shared.data import JobSearchOut, StreamManager, TimePeriod, JobListing, StreamType, StreamEvent, SearchJobsParams
 from main_project.app.core.stores.sent_jobs_store import SentJobsStore
@@ -25,7 +26,7 @@ class JobSearchScheduler:
     def __init__(self, stream_manager: StreamManager, sent_jobs_store: SentJobsStore):
         """Initialize the scheduler."""
         self._stream_manager = stream_manager
-        self._scheduler = AsyncIOScheduler()
+        self._scheduler = AsyncIOScheduler(timezone=pytz.UTC)
         self._active_searches: Dict[str, JobSearchOut] = {}  # search_id -> JobSearch
         self._sent_jobs_store = sent_jobs_store
         self._semaphore = asyncio.Semaphore(4)  # Limit to 4 concurrent jobs

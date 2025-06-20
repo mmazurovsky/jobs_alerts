@@ -10,10 +10,10 @@ import random
 from urllib.parse import urlparse, urlunparse, quote_plus, urlencode
 from playwright_stealth import stealth_async
 from datetime import datetime, timezone, timedelta
-import pytz
 import traceback
 from collections import deque
-from llm.litellm_client import LiteLLMClient
+from linkedin_scraper_service.app.llm.litellm_client import LiteLLMClient
+from linkedin_scraper_service.app.utils.parallel_executor import execute_parallel_with_semaphore
 
 class LinkedInScraperGuest:
     """LinkedIn job scraper for public/guest access (no login)."""
@@ -166,6 +166,7 @@ class LinkedInScraperGuest:
 
     @classmethod
     async def _get_browser(cls, launch_options=None):
+        """Get shared browser instance with thread safety."""
         async with cls._browser_lock:
             if cls._browser is None:
                 if cls._playwright is None:
@@ -216,7 +217,7 @@ class LinkedInScraperGuest:
                 'user_agent': random.choice(self.USER_AGENTS),
                 'viewport': random.choice(self.VIEWPORT_SIZES),
                 'locale': 'en-US',
-                'timezone_id': 'America/New_York',
+                'timezone_id': 'Europe/London',
                 'geolocation': None,
                 'permissions': [],
                 'extra_http_headers': {
@@ -241,8 +242,10 @@ class LinkedInScraperGuest:
                 self.logger.info(f"Using proxy: {self.proxy_config.get('server', 'configured')}")
             else:
                 self.logger.info("No proxy configured, using direct connection")
+            
             self.context = await self.browser.new_context(**context_options)
             self.logger.info("Created new browser context")
+            
             # Add stealth scripts to avoid detection
             await self.context.add_init_script("""
                 Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
@@ -258,20 +261,19 @@ class LinkedInScraperGuest:
                 Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
                 Object.defineProperty(navigator, 'connection', { get: () => ({ effectiveType: '4g', rtt: 50, downlink: 10 }) });
             """)
+            
             self.logger.info("Creating new page...")
             self.page = await self.context.new_page()
             await stealth_async(self.page)
             self.logger.info("Stealth script injected.")
+            
             await self._block_resource_types()
-            self.logger.info("Testing navigation to about:blank...")
-            await self.page.goto('about:blank', timeout=10000)
-            self.logger.info(f"Test navigation successful, current URL: {self.page.url}")
             self.logger.info("Initialized Playwright context for guest scraping with human-like behavior.")
         except Exception as e:
             self.logger.error(f"Context initialization failed: {e}")
             await self._cleanup()
             raise
-
+    
     async def _cleanup(self):
         """Clean up context and page resources only."""
         self.logger.info("Cleaning up context and page resources...")
@@ -321,7 +323,7 @@ class LinkedInScraperGuest:
             return await self._search_jobs_internal(
                     keywords, location, job_types, 
                     remote_types, time_period, blacklist, filter_text
-                )
+            )
         except Exception as e:
             self.logger.error(f"Search for '{keywords}' failed: {e}")
             return []
@@ -378,8 +380,7 @@ class LinkedInScraperGuest:
                                 await current_page.close()
                                 current_page = await self.context.new_page()
                                 await stealth_async(current_page)
-                        
-                        
+                    
                     api_url = f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
                     public_url = f"https://www.linkedin.com/jobs/view/{job_id}/"
                     
@@ -471,93 +472,65 @@ class LinkedInScraperGuest:
         Fetch job details for multiple job IDs in parallel by cycling through different 
         proxy configurations with the same scraper instance.
         """
-        if not job_ids:
-            return []
-            
-        # Configure parallel processing
-        max_concurrent_tasks = 3  # Number of concurrent tasks (reduced to avoid overwhelming)
-        
-        self.logger.info(f"Processing {len(job_ids)} job IDs with max {max_concurrent_tasks} concurrent tasks")
-        
-        # Create semaphore to limit concurrency
-        semaphore = asyncio.Semaphore(max_concurrent_tasks)
-        
-        # Create tasks for parallel processing with different proxy configs
-        async def process_job_with_proxy_rotation(job_id: str, task_index: int) -> tuple[str, Optional[ShortJobListing]]:
-            async with semaphore:
+        async def process_single_job_details(job_id: str, task_index: int) -> tuple[str, Optional[ShortJobListing]]:
+            try:
+                # Rotate proxy config for this task
+                if task_index % 5 == 0:  # Every 5th task gets a new proxy
+                    new_proxy_config = self._get_default_proxy_config()
+                    await self._update_proxy_config(new_proxy_config)
+                    await asyncio.sleep(1)  # Brief delay after proxy change
+                
+                # Create a dedicated page for this job to avoid interference
+                job_page = await self.context.new_page()
+                await stealth_async(job_page)
+                
                 try:
-                    # Rotate proxy config for this task
-                    if task_index % 5 == 0:  # Every 5th task gets a new proxy
-                        new_proxy_config = self._get_default_proxy_config()
-                        await self._update_proxy_config(new_proxy_config)
-                        await asyncio.sleep(1)  # Brief delay after proxy change
-                    
-                    # Create a dedicated page for this job to avoid interference
-                    job_page = await self.context.new_page()
-                    await stealth_async(job_page)
-                    
-                    try:
-                        # Process the job with dedicated page - return tuple with job_id to maintain mapping
-                        job = await self._get_job_details(job_id, page=job_page)
-                        if job:
-                            self.logger.info(f"Task {task_index}: Job details for job_id={job_id} found")
-                            return (job_id, job)
-                        else:
-                            self.logger.warning(f"Task {task_index}: Job details for job_id={job_id} not found")
-                            return (job_id, None)
-                    finally:
-                        # Always close the dedicated page
-                        try:
-                            await job_page.close()
-                        except Exception as e:
-                            self.logger.error(f"Error closing page for task {task_index}, job_id={job_id}: {e}")
-                            
-                except Exception as e:
-                    self.logger.error(f"Task {task_index}: Error processing job_id={job_id}: {e}")
-                    return (job_id, None)
-        
-        # Create tasks for all job IDs
-        tasks = [
-            process_job_with_proxy_rotation(job_id, i) 
-            for i, job_id in enumerate(job_ids)
-        ]
-        
-        # Execute all tasks with controlled concurrency
-        try:
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            # Process results and maintain job_id mapping
-            successful_jobs = []
-            failed_count = 0
-            job_results_dict = {}
-            
-            for i, result in enumerate(results):
-                if isinstance(result, Exception):
-                    self.logger.error(f"Job {i+1} failed with exception: {result}")
-                    failed_count += 1
-                elif isinstance(result, tuple) and len(result) == 2:
-                    job_id, job_data = result
-                    job_results_dict[job_id] = job_data
-                    if job_data is not None:
-                        successful_jobs.append(job_data)
+                    # Process the job with dedicated page - return tuple with job_id to maintain mapping
+                    job = await self._get_job_details(job_id, page=job_page)
+                    if job:
+                        self.logger.info(f"Task {task_index}: Job details for job_id={job_id} found")
+                        return (job_id, job)
                     else:
-                        failed_count += 1
-                else:
-                    self.logger.warning(f"Job {i+1} returned unexpected result format: {result}")
-                    failed_count += 1
-            
-            # Log the mapping for verification
-            self.logger.info(f"Job ID to result mapping verification:")
-            for job_id in job_ids[:5]:  # Log first 5 for verification
-                result_status = "SUCCESS" if job_results_dict.get(job_id) else "FAILED/MISSING"
-                self.logger.info(f"  job_id={job_id} -> {result_status}")
-            
-            self.logger.info(f"Parallel processing completed: {len(successful_jobs)} successful, {failed_count} failed out of {len(job_ids)} total")
-            return successful_jobs
-            
-        except Exception as e:
-            self.logger.error(f"Error in parallel job details processing: {e}", exc_info=True)
-            return []
+                        self.logger.warning(f"Task {task_index}: Job details for job_id={job_id} not found")
+                        return (job_id, None)
+                finally:
+                    # Always close the dedicated page
+                    try:
+                        await job_page.close()
+                    except Exception as e:
+                        self.logger.error(f"Error closing page for task {task_index}, job_id={job_id}: {e}")
+                        
+            except Exception as e:
+                self.logger.error(f"Task {task_index}: Error processing job_id={job_id}: {e}")
+                return (job_id, None)
+        
+        # Use the parallel execution utility
+        results = await execute_parallel_with_semaphore(
+            items=job_ids,
+            async_func=process_single_job_details,
+            max_concurrent=3,
+            operation_name="job details fetching",
+            logger=self.logger
+        )
+        
+        # Process results and maintain job_id mapping
+        successful_jobs = []
+        job_results_dict = {}
+        
+        for result in results:
+            if isinstance(result, tuple) and len(result) == 2:
+                job_id, job_data = result
+                job_results_dict[job_id] = job_data
+                if job_data is not None:
+                    successful_jobs.append(job_data)
+        
+        # Log the mapping for verification
+        self.logger.info(f"Job ID to result mapping verification:")
+        for job_id in job_ids[:5]:  # Log first 5 for verification
+            result_status = "SUCCESS" if job_results_dict.get(job_id) else "FAILED/MISSING"
+            self.logger.info(f"  job_id={job_id} -> {result_status}")
+        
+        return successful_jobs
 
     async def _update_proxy_config(self, new_proxy_config: Optional[Dict[str, str]] = None):
         """Update proxy configuration and restart browser context without full reinitialization."""
@@ -580,7 +553,7 @@ class LinkedInScraperGuest:
                     'user_agent': random.choice(self.USER_AGENTS),
                     'viewport': random.choice(self.VIEWPORT_SIZES),
                     'locale': 'en-US',
-                    'timezone_id': 'America/New_York',
+                    'timezone_id': 'Europe/London',
                     'geolocation': None,
                     'permissions': [],
                     'extra_http_headers': {
@@ -660,7 +633,7 @@ class LinkedInScraperGuest:
         # Add location if provided
         if location:
             params["location"] = location
-            
+        
         # Add job type filters (f_JT)
         if job_types:
             jt_mapping = {
@@ -745,7 +718,7 @@ class LinkedInScraperGuest:
                             all_job_ids.add(job_id)
                     except Exception as e:
                         self.logger.error(f"Failed to extract job ID from card: {e}")
-                        continue
+                continue
                         
                 self.logger.info(f"Extracted {len(page_job_ids)} job IDs from page {iteration + 1}")
                 

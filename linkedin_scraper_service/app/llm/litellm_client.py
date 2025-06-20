@@ -1,13 +1,14 @@
 import json
 import logging
 import os
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Callable
 import asyncio
 from shared.data import ShortJobListing, JobType, RemoteType, FullJobListing
 from litellm import acompletion
 from langdetect import detect
 from googletrans import Translator
 from pydantic import Field
+from linkedin_scraper_service.app.utils.parallel_executor import execute_parallel_with_semaphore
 _translator = Translator()
 
 
@@ -36,11 +37,29 @@ class LiteLLMClient:
         # DeepSeek-chat has 64k context but we'll be more conservative for reliability
         self.max_input_tokens = 8000  # Reduced from 16000 for smaller batches
         self.estimated_tokens_per_char = 0.25  # Conservative estimate for English text
-        self.job_description_max_length = 3000  # Increased to 3000 for more comprehensive analysis
+        self.job_description_max_length = 4000  
         
         
         if not self.api_key:
             self.logger.warning("DEEPSEEK_API_KEY not found in environment variables")
+    
+    async def _translate_job_parallel(self, job: ShortJobListing, index: int) -> ShortJobListing:
+        """Translate a single job's title and description to English."""
+        try:
+            title_en = await ensure_english(job.title)
+            desc_en = await ensure_english(job.description)
+            
+            return ShortJobListing(
+                title=title_en,
+                company=job.company,
+                location=job.location,
+                link=job.link,
+                created_ago=job.created_ago,
+                description=desc_en
+            )
+        except Exception as e:
+            self.logger.error(f"Translation failed for job {index}: {e}")
+            return job  # Return original job if translation fails
     
     async def enrich_jobs(
         self,
@@ -74,21 +93,20 @@ class LiteLLMClient:
             return self._create_fallback_full_jobs(jobs)
         
         try:
-            # Pre-translate all job descriptions and titles to English (async)
-            jobs_english = []
-            for job in jobs:
-                title_en = await ensure_english(job.title)
-                desc_en = await ensure_english(job.description)
-                jobs_english.append(
-                    ShortJobListing(
-                        title=title_en,
-                        company=job.company,
-                        location=job.location,
-                        link=job.link,
-                        created_ago=job.created_ago,
-                        description=desc_en
-                    )
-                )
+            # Pre-translate all job descriptions and titles to English using parallel execution
+            self.logger.info(f"Starting parallel translation for {len(jobs)} jobs")
+            translated_jobs_results = await execute_parallel_with_semaphore(
+                items=jobs,
+                async_func=self._translate_job_parallel,
+                max_concurrent=5,  # Higher concurrency for translation as it's lightweight
+                operation_name="Job translation",
+                logger=self.logger
+            )
+            
+            # Filter out failed translations
+            jobs_english = [job for job in translated_jobs_results if job is not None]
+            if len(jobs_english) != len(jobs):
+                self.logger.warning(f"Translation failed for {len(jobs) - len(jobs_english)} jobs")
             
             # Convert parameters to string lists for processing
             keywords_list = [keywords] if keywords else []
@@ -96,21 +114,32 @@ class LiteLLMClient:
             remote_types_list = [rt.label for rt in remote_types] if remote_types else []
             
             # Split jobs into batches based on content length
-            all_results = []
             job_batches = self._split_jobs_by_content_length(jobs_english, keywords_list, job_types_list, remote_types_list, location, filter_text)
             
-            for batch_idx, (batch_jobs, batch_start_offset) in enumerate(job_batches):
-                self.logger.info(f"Processing batch {batch_idx + 1}/{len(job_batches)} with {len(batch_jobs)} jobs (offset: {batch_start_offset})")
+            # Process batches in parallel
+            async def process_batch(batch_data, batch_index: int):
+                batch_jobs, batch_start_offset = batch_data
+                self.logger.info(f"Processing batch {batch_index + 1}/{len(job_batches)} with {len(batch_jobs)} jobs (offset: {batch_start_offset})")
                 
-                batch_results = await self._process_job_batch(
+                return await self._process_job_batch(
                     batch_jobs, keywords_list, job_types_list, remote_types_list, 
                     location, filter_text, batch_start_offset
                 )
-                all_results.extend(batch_results)
-                
-                # Small delay between requests to be respectful
-                if batch_idx < len(job_batches) - 1:
-                    await asyncio.sleep(0.5)
+            
+            # Execute batch processing in parallel with limited concurrency to avoid API rate limits
+            batch_results = await execute_parallel_with_semaphore(
+                items=job_batches,
+                async_func=process_batch,
+                max_concurrent=2,  # Lower concurrency for LLM requests to respect rate limits
+                operation_name="LLM batch filtering processing",
+                logger=self.logger
+            )
+            
+            # Flatten results
+            all_results = []
+            for batch_result in batch_results:
+                if batch_result and isinstance(batch_result, list):
+                    all_results.extend(batch_result)
 
             # add log message with title and filter reason for each job
             for result in all_results:
@@ -173,6 +202,8 @@ Description: {description}
             
             # If adding this job would exceed token limit, start new batch
             if current_batch and (current_batch_tokens + job_tokens > available_tokens):
+                self.logger.info(f"Starting new batch at job {i}: current_batch_tokens={current_batch_tokens:.1f} + "
+                               f"new_job_tokens={job_tokens:.1f} > available_tokens={available_tokens:.1f}")
                 batches.append((current_batch.copy(), batch_start_offset))
                 current_batch = [job]
                 current_batch_tokens = job_tokens
