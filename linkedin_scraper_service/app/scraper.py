@@ -242,10 +242,10 @@ class LinkedInScraperGuest:
                 self.logger.info(f"Using proxy: {self.proxy_config.get('server', 'configured')}")
             else:
                 self.logger.info("No proxy configured, using direct connection")
-            
+
             self.context = await self.browser.new_context(**context_options)
             self.logger.info("Created new browser context")
-            
+
             # Add stealth scripts to avoid detection
             await self.context.add_init_script("""
                 Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
@@ -261,19 +261,19 @@ class LinkedInScraperGuest:
                 Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
                 Object.defineProperty(navigator, 'connection', { get: () => ({ effectiveType: '4g', rtt: 50, downlink: 10 }) });
             """)
-            
+
             self.logger.info("Creating new page...")
             self.page = await self.context.new_page()
             await stealth_async(self.page)
             self.logger.info("Stealth script injected.")
-            
+
             await self._block_resource_types()
             self.logger.info("Initialized Playwright context for guest scraping with human-like behavior.")
         except Exception as e:
             self.logger.error(f"Context initialization failed: {e}")
             await self._cleanup()
             raise
-    
+
     async def _cleanup(self):
         """Clean up context and page resources only."""
         self.logger.info("Cleaning up context and page resources...")

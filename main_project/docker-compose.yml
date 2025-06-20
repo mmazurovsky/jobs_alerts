@@ -13,13 +13,7 @@ services:
       - ../:/app
     restart: unless-stopped
     env_file:
-      - .env.${ENVIRONMENT}
+      - .env.${ENV}
     ports:
       - "8001:8001"
-    platform: linux/amd64 
-    networks:
-      - jobs_alerts_network
-
-networks:
-  jobs_alerts_network:
-    external: true
+    platform: linux/amd64

@@ -83,3 +83,10 @@ MANIFEST
 screenshots/
 main_project/.env.test
 main_project/.env.prod
+
+# Docker
+docker-compose.override.yml
+main_project/docker-compose.override.yml
+linkedin_scraper_service/docker-compose.override.yml
+*.env
+*.env.*

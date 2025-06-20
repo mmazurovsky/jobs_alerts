@@ -2,9 +2,9 @@
 
 set -e
 
-ENVIRONMENT="test"
+ENV="test"
 
-export ENVIRONMENT
+export ENV
 
 # Create network first if it doesn't exist
 echo "Creating Docker network..."
