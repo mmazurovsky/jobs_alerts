@@ -4,8 +4,6 @@ services:
       context: ..
       dockerfile: main_project/Dockerfile
     image: registry.digitalocean.com/mmazurovsky-registry/main_project
-    env_file:
-      - .env
     volumes:
       - ./logs:/home/scraper/app/logs
       - ./screenshots:/home/scraper/app/screenshots
@@ -14,6 +12,14 @@ services:
       - ./tmp:/tmp
       - ../:/app
     restart: unless-stopped
+    env_file:
+      - .env.${ENVIRONMENT}
     ports:
       - "8001:8001"
     platform: linux/amd64 
+    networks:
+      - jobs_alerts_network
+
+networks:
+  jobs_alerts_network:
+    external: true

@@ -27,7 +27,7 @@ from main_project.app.core.job_search_manager import JobSearchManager
 logger = logging.getLogger(__name__)
 
 # Conversation states
-TITLE, LOCATION, JOB_TYPES, REMOTE_TYPES, TIME_PERIOD, BLACKLIST, CONFIRM = range(7)
+TITLE, LOCATION, JOB_TYPES, REMOTE_TYPES, TIME_PERIOD, FILTER_TEXT, CONFIRM, ONE_TIME_DEEP_SEARCH_CONFIRM = range(8)
 
 try:
     ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID"))
@@ -61,7 +61,17 @@ class TelegramBot:
         self.application.add_handler(CommandHandler("list", self.list_searches))
         self.application.add_handler(CommandHandler("delete", self.delete_search))
         self.application.add_handler(CommandHandler("newRaw", self.new_raw_search))
-        
+        # Remove direct add_handler for oneTimeDeepSearch
+        # Add ConversationHandler for one-time deep search
+        one_time_deep_search_conv = ConversationHandler(
+            entry_points=[CommandHandler("oneTimeDeepSearch", self.one_time_deep_search)],
+            states={
+                ONE_TIME_DEEP_SEARCH_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.one_time_deep_search_confirm)],
+            },
+            fallbacks=[CommandHandler("cancel", self.cancel)],
+            per_message=False
+        )
+        self.application.add_handler(one_time_deep_search_conv)
         # Conversation handler for creating new job searches
         conv_handler = ConversationHandler(
             entry_points=[CommandHandler("new", self.new_search)],
@@ -71,7 +81,7 @@ class TelegramBot:
                 JOB_TYPES: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.job_types)],
                 REMOTE_TYPES: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.remote_types)],
                 TIME_PERIOD: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.time_period)],
-                BLACKLIST: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.blacklist)],
+                FILTER_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.filter_text)],
                 CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.confirm)],
             },
             fallbacks=[
@@ -80,7 +90,8 @@ class TelegramBot:
                 CommandHandler("list", self.list_searches),
                 CommandHandler("delete", self.delete_search),
                 CommandHandler("help", self.help),
-                CommandHandler("start", self.start)
+                CommandHandler("start", self.start),
+                CommandHandler("oneTimeDeepSearch", self.one_time_deep_search)
             ],
             per_message=False
         )
@@ -103,17 +114,21 @@ class TelegramBot:
             "Available commands:\n"
             "/new - Create a new job search\n"
             "/newRaw - Create a new job search with a single command (advanced)\n"
+            "/oneTimeDeepSearch - Perform immediate deep search with LLM filtering\n"
             "/list - List your job searches\n"
             "/delete - Delete a job search\n"
             "/help - Show this help message\n\n"
             "*Advanced: /newRaw usage*\n"
-            "/newRaw <job_title>;<location>;<job_type>;<remote_type>;<time_period>[;<blacklist>]\n"
-            "Example: /newRaw Software Engineer;Germany;Full-time;Remote;5 minutes;intern,senior,lead\n\n"
+            "/newRaw <job_title>;<location>;<job_type>;<remote_type>;<time_period>[;<filter_prompt>]\n"
+            "Example: /newRaw Software Engineer;Germany;Full-time;Remote;5 minutes;Senior level no German required\n\n"
+            "*One-time deep search: /oneTimeDeepSearch usage*\n"
+            "/oneTimeDeepSearch <job_title>;<location>;<job_type>;<remote_type>;<filter_prompt>\n"
+            "Example: /oneTimeDeepSearch Python Developer;Remote;Full-time;Remote;Don't include hybrid options, don't include jobs that require German language, don't include analyst jobs\n\n"
             "Available values:\n"
             "- Job types: Full-time, Part-time, Contract, Temporary, Internship\n"
             "- Remote types: On-site, Remote, Hybrid\n"
-            "- Time periods: 5 minutes, 10 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours\n"
-            "- Blacklist: Optional, comma-separated words/phrases to exclude from job titles"
+            "- Time periods: 5 minutes, 10 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours, 24 hours\n"
+            "- Filter prompt: Optional freeform text (max 300 chars) for LLM-based job filtering"
         )
         await update.message.reply_text(help_text)
     
@@ -131,7 +146,6 @@ class TelegramBot:
             for search in searches:
                 job_types = ", ".join(t.label for t in search.job_types)
                 remote_types = ", ".join(t.label for t in search.remote_types)
-                blacklist_str = ", ".join(search.blacklist) if search.blacklist else None
                 message += (
                     f"ID: {search.id}\n"
                     f"Title: {search.job_title}\n"
@@ -140,8 +154,8 @@ class TelegramBot:
                     f"Remote Types: {remote_types}\n"
                     f"Check Frequency: {search.time_period.display_name}\n"
                 )
-                if blacklist_str:
-                    message += f"Blacklist: {blacklist_str}\n"
+                if hasattr(search, 'filter_text') and search.filter_text:
+                    message += f"Filter: {search.filter_text}\n"
                 message += f"Created At: {search.created_at}\n\n"
                 
             await update.message.reply_text(message)
@@ -226,7 +240,7 @@ class TelegramBot:
     def _parse_blacklist(self, blacklist_str: str) -> List[str]:
         return [s.strip() for s in blacklist_str.split(',') if s.strip()]
 
-    def _format_confirmation_message(self, title, location, job_types, remote_types, time_period, blacklist, search_id=None):
+    def _format_confirmation_message(self, title, location, job_types, remote_types, time_period, blacklist, search_id=None, filter_text=None):
         msg = ""
         if search_id:
             msg += f"Search ID: {search_id}\n"
@@ -237,8 +251,8 @@ class TelegramBot:
             f"Remote: {', '.join(rt.label for rt in remote_types)}\n"
             f"Check every: {time_period.display_name}\n"
         )
-        if blacklist:
-            msg += f"Blacklist: {', '.join(blacklist)}\n"
+        if filter_text:
+            msg += f"Filter: {filter_text}\n"
         return msg
 
     async def job_types(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -301,46 +315,59 @@ class TelegramBot:
             return TIME_PERIOD
         context.user_data['time_period'] = selected_period
         await update.message.reply_text(
-            "Optional: Enter a comma-separated list of words or phrases to blacklist from job titles.\n"
-            "Any job whose title contains one of these (case-insensitive) will be excluded.\n"
-            "For example: intern,senior,lead\n\n"
+            "Optional: Enter a filter prompt for LLM-based job filtering (max 300 characters).\n"
+            "This allows you to specify requirements like seniority, technologies, or restrictions.\n"
+            "For example: Don't include junior level jobs, no German should berequired\n\n"
             "Or just type '-' to skip."
         )
-        return BLACKLIST
+        return FILTER_TEXT
     
-    async def blacklist(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    async def filter_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Handle filter text input."""
         input_text = update.message.text.strip()
         if input_text == '-' or not input_text:
-            context.user_data['blacklist'] = []
+            context.user_data['filter_text'] = None
         else:
-            context.user_data['blacklist'] = self._parse_blacklist(input_text)
+            if len(input_text) > 300:
+                await update.message.reply_text(
+                    "❌ Filter prompt is too long. Maximum 300 characters allowed. Please try again."
+                )
+                return FILTER_TEXT
+            context.user_data['filter_text'] = input_text
+        
         # Show job search summary and ask for confirmation
         job_title = context.user_data['title']
         location = context.user_data['location']
         job_types = context.user_data['job_types']
         remote_types = context.user_data['remote_types']
         time_period = context.user_data['time_period']
-        blacklist = context.user_data.get('blacklist', [])
-        msg = self._format_confirmation_message(job_title, location, job_types, remote_types, time_period, blacklist)
+        filter_text = context.user_data.get('filter_text')
+        msg = self._format_confirmation_message(job_title, location, job_types, remote_types, time_period, [], None, filter_text)
         msg += "\nPlease confirm your job search by typing 'yes' or cancel by typing 'no'."
         await update.message.reply_text(msg)
         return CONFIRM
     
+    @staticmethod
+    def is_yes_response(text: str) -> bool:
+        """Return True if the text is a 'yes' response (case-insensitive), else False."""
+        return text.strip().lower() == 'yes'
+
     async def confirm(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        input_text = update.message.text.strip().lower()
-        if input_text == 'no':
+        input_text = update.message.text.strip()
+        if input_text.lower() == 'no':
             await update.message.reply_text("Job search creation cancelled.")
             return ConversationHandler.END
-        if input_text != 'yes':
+        if not self.is_yes_response(input_text):
             await update.message.reply_text("Please type 'yes' to confirm or 'no' to cancel.")
             return CONFIRM
         try:
+            # Regular job search creation
             job_title = context.user_data['title']
             location = context.user_data['location']
             job_types = context.user_data['job_types']
             remote_types = context.user_data['remote_types']
             time_period = context.user_data['time_period']
-            blacklist = context.user_data.get('blacklist', [])
+            filter_text = context.user_data.get('filter_text')
             job_search_in = JobSearchIn(
                 job_title=job_title,
                 location=location,
@@ -348,10 +375,11 @@ class TelegramBot:
                 remote_types=remote_types,
                 time_period=time_period,
                 user_id=update.effective_user.id,
-                blacklist=blacklist
+                blacklist=[],
+                filter_text=filter_text
             )
             search_id = await self.job_search_manager.add_search(job_search_in)
-            msg = self._format_confirmation_message(job_title, location, job_types, remote_types, time_period, blacklist, search_id)
+            msg = self._format_confirmation_message(job_title, location, job_types, remote_types, time_period, [], search_id, filter_text)
             await update.message.reply_text(msg)
         except Exception as e:
             logger.error(f"Error creating job search: {e}")
@@ -482,6 +510,7 @@ class TelegramBot:
             user_id = message_data.get("user_id")
             message = message_data.get("message")
             image_path = message_data.get("image_path")
+            
             if image_path and os.path.exists(image_path):
                 with open(image_path, "rb") as img:
                     await self.application.bot.send_photo(
@@ -490,13 +519,75 @@ class TelegramBot:
                         caption=message
                     )
             else:
-                await self.application.bot.send_message(
-                    chat_id=user_id,
-                    text=message, 
-                    parse_mode=None
-                )
+                # Check if message is too long and split if needed
+                await self._send_message_with_splitting(user_id, message)
         except Exception as e:
             logger.error(f"Error sending message: {e}")
+    
+    async def _send_message_with_splitting(self, user_id: int, message: str):
+        """Send a message with automatic splitting if it's too long."""
+        try:
+            # Telegram's message length limit is 4096 characters
+            if len(message) <= 4096:
+                # Send message as-is if it's within the limit
+                await self.application.bot.send_message(
+                    chat_id=user_id,
+                    text=message,
+                    parse_mode=None
+                )
+            else:
+                # Split the message into multiple parts
+                await self._send_long_message_in_parts(user_id, message)
+        except Exception as e:
+            logger.error(f"Error sending message to user {user_id}: {e}")
+    
+    async def _send_long_message_in_parts(self, user_id: int, message: str):
+        """Split a long message into multiple parts and send them."""
+        lines = message.split('\n')
+        current_message = ""
+        part_number = 1
+        
+        for line in lines:
+            # Check if adding this line would exceed the limit
+            test_message = current_message + line + '\n'
+            
+            if len(test_message) > 4096:
+                # Send current message if it's not empty
+                if current_message.strip():
+                    await self.application.bot.send_message(
+                        chat_id=user_id,
+                        text=current_message.rstrip(),
+                        parse_mode=None
+                    )
+                    part_number += 1
+                
+                # Start new message with current line, add part indicator for subsequent parts
+                if part_number > 1:
+                    header = f"📄 Part {part_number}:\n\n"
+                    current_message = header + line + '\n'
+                    
+                    # If even with header it's too long, truncate the line
+                    if len(current_message) > 4096:
+                        max_line_length = 4096 - len(header) - 1  # -1 for newline
+                        truncated_line = line[:max_line_length - 3] + "..."
+                        current_message = header + truncated_line + '\n'
+                else:
+                    current_message = line + '\n'
+                    
+                    # If even a single line is too long, truncate it
+                    if len(current_message) > 4096:
+                        truncated_line = line[:4090] + "..."
+                        current_message = truncated_line + '\n'
+            else:
+                current_message = test_message
+        
+        # Send the last part if it's not empty
+        if current_message.strip():
+            await self.application.bot.send_message(
+                chat_id=user_id,
+                text=current_message.rstrip(),
+                parse_mode=None
+            )
 
     async def new_raw_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
@@ -505,19 +596,24 @@ class TelegramBot:
             if len(parts) < 5 or len(parts) > 6:
                 await update.message.reply_text(
                     "Invalid format. Please use:\n"
-                    "/newRaw <job_title>;<location>;<job_type>;<remote_type>;<time_period>[;<blacklist>]\n\n"
-                    "Example: /newRaw Software Engineer;Germany;Full-time,Part-time;Remote,Hybrid;5 minutes;intern,junior\n\n"
+                    "/newRaw <job_title>;<location>;<job_type>;<remote_type>;<time_period>[;<filter_prompt>]\n\n"
+                    "Example: /newRaw Software Engineer;Germany;Full-time,Part-time;Remote,Hybrid;5 minutes;No requirement about German language\n\n"
                     "Available values:\n"
                     "- Job types: Full-time, Part-time, Contract, Temporary, Internship\n"
                     "- Remote types: On-site, Remote, Hybrid\n"
-                    "- Time periods: 5 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours\n"
-                    "- Blacklist: Optional, comma-separated words/phrases to exclude from job titles"
+                    "- Time periods: 5 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours, 24 hours\n"
+                    "- Filter prompt: Optional freeform text (max 300 chars) for LLM-based job filtering"
                 )
                 return
             title, location, job_type, remote_types, time_period = parts[:5]
-            blacklist = []
+            filter_text = None
             if len(parts) == 6:
-                blacklist = self._parse_blacklist(parts[5])
+                filter_text = parts[5].strip()
+                if len(filter_text) > 300:
+                    await update.message.reply_text(
+                        "❌ Filter prompt is too long. Maximum 300 characters allowed."
+                    )
+                    return
             job_type_enums = self._parse_job_types(job_type)
             remote_type_enums = self._parse_remote_types(remote_types)
             time_period_enum = TimePeriod.parse(time_period.strip())
@@ -528,32 +624,124 @@ class TelegramBot:
                 remote_types=remote_type_enums,
                 time_period=time_period_enum,
                 user_id=update.effective_user.id,
-                blacklist=blacklist
+                blacklist=[],
+                filter_text=filter_text
             )
             search_id = await self.job_search_manager.add_search(job_search_in)
-            msg = self._format_confirmation_message(title, location, job_type_enums, remote_type_enums, time_period_enum, blacklist, search_id)
+            msg = self._format_confirmation_message(title, location, job_type_enums, remote_type_enums, time_period_enum, [], search_id, filter_text)
             await update.message.reply_text(msg)
         except ValueError as e:
             await update.message.reply_text(
                 f"❌ Error: {str(e)}\n\n"
                 "Please use the correct format:\n"
-                "/newRaw <job_title>;<location>;<job_type(s)>;<remote_type(s)>;<time_period>[;<blacklist>]\n\n"
-                "Example: /newRaw Software Engineer;Germany;Full-time,Part-time;Remote,Hybrid;5 minutes;intern,junior,sap\n\n"
+                "/newRaw <job_title>;<location>;<job_type(s)>;<remote_type(s)>;<time_period>[;<filter_prompt>]\n\n"
+                "Example: /newRaw Software Engineer;Germany;Full-time,Part-time;Remote,Hybrid;5 minutes;Senior level no German required\n\n"
                 "Available values:\n"
                 "- Job types: Full-time, Part-time, Contract, Temporary, Internship\n"
                 "- Remote types: On-site, Remote, Hybrid\n"
-                "- Time periods: 5 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours\n"
-                "- Blacklist: Optional, comma-separated words/phrases to exclude from job titles"
+                "- Time periods: 5 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours, 24 hours\n"
+                "- Filter prompt: Optional freeform text (max 300 chars) for LLM-based job filtering"
             )
         except Exception as e:
             await update.message.reply_text(
                 f"❌ Error creating job search: {str(e)}\n\n"
                 "Please use the correct format:\n"
-                "/newRaw <job_title>;<location>;<job_type(s)>;<remote_type(s)>;<time_period>[;<blacklist>]\n\n"
-                "Example: /newRaw Software Engineer;Germany;Full-time,Part-time;Remote,Hybrid;5 minutes;intern,junior,sap\n\n"
+                "/newRaw <job_title>;<location>;<job_type(s)>;<remote_type(s)>;<time_period>[;<filter_prompt>]\n\n"
+                "Example: /newRaw Software Engineer;Germany;Full-time,Part-time;Remote,Hybrid;5 minutes;Senior level no German required\n\n"
                 "Available values:\n"
                 "- Job types: Full-time, Part-time, Contract, Temporary, Internship\n"
                 "- Remote types: On-site, Remote, Hybrid\n"
-                "- Time periods: 5 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours\n"
-                "- Blacklist: Optional, comma-separated words/phrases to exclude from job titles"
-            ) 
+                "- Time periods: 5 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours, 24 hours\n"
+                "- Filter prompt: Optional freeform text (max 300 chars) for LLM-based job filtering"
+            )
+
+    async def one_time_deep_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Handle one-time deep search command with required filter prompt and confirmation state."""
+        self._clear_conversation_state(context)
+        try:
+            raw_input = update.message.text.split('/oneTimeDeepSearch ')[1].strip()
+            parts = raw_input.split(';')
+            if len(parts) != 5:
+                await update.message.reply_text(
+                    "Invalid format. Please use:\n"
+                    "/oneTimeDeepSearch <job_title>;<location>;<job_type>;<remote_type>;<filter_prompt>\n\n"
+                    "Example: /oneTimeDeepSearch Python Developer;Switzerland;Full-time;Remote;Senior backend role no hybrid\n\n"
+                    "Available values:\n"
+                    "- Job types: Full-time, Part-time, Contract, Temporary, Internship\n"
+                    "- Remote types: On-site, Remote, Hybrid\n"
+                    "- Filter prompt: Required freeform text (max 300 chars) for LLM-based job filtering"
+                )
+                return ConversationHandler.END
+            title, location, job_type, remote_types, filter_text = parts
+            filter_text = filter_text.strip()
+            if not filter_text:
+                await update.message.reply_text(
+                    "❌ Filter prompt is required for deep search."
+                )
+                return ConversationHandler.END
+            if len(filter_text) > 300:
+                await update.message.reply_text(
+                    "❌ Filter prompt is too long. Maximum 300 characters allowed."
+                )
+                return ConversationHandler.END
+            job_type_enums = self._parse_job_types(job_type)
+            remote_type_enums = self._parse_remote_types(remote_types)
+            job_search_data = JobSearchIn(
+                job_title=title.strip(),
+                location=location.strip(),
+                job_types=job_type_enums,
+                remote_types=remote_type_enums,
+                time_period=TimePeriod.parse("1 month"),  # TODO: parse from user
+                user_id=update.effective_user.id,
+                blacklist=[],
+                filter_text=filter_text
+            )
+            msg = (
+                "🔍 One-time Deep Search Confirmation:\n\n"
+                f"Job Title: {job_search_data.job_title}\n"
+                f"Location: {job_search_data.location}\n"
+                f"Job Types: {', '.join(jt.label for jt in job_search_data.job_types)}\n"
+                f"Remote Types: {', '.join(rt.label for rt in job_search_data.remote_types)}\n"
+                f"Filter Prompt: {job_search_data.filter_text}\n\n"
+                "This will search immediately and return results. Confirm with 'yes' or cancel with 'no'."
+            )
+            await update.message.reply_text(msg)
+            context.user_data['one_time_search_pending'] = job_search_data
+            return ONE_TIME_DEEP_SEARCH_CONFIRM
+        except ValueError as e:
+            await update.message.reply_text(
+                f"❌ Error: {str(e)}\n\n"
+                "Please use the correct format:\n"
+                "/oneTimeDeepSearch <job_title>;<location>;<job_type(s)>;<remote_type(s)>;<filter_prompt>\n\n"
+                "Example: /oneTimeDeepSearch Python Developer;Switzerland;Full-time;Remote;No hybrid, no German required"
+            )
+            return ConversationHandler.END
+        except Exception as e:
+            await update.message.reply_text(
+                f"❌ Error: {str(e)}\n\n"
+                "Please use the correct format:\n"
+                "/oneTimeDeepSearch <job_title>;<location>;<job_type(s)>;<remote_type(s)>;<filter_prompt>"
+                "Example: /oneTimeDeepSearch Python Developer;Switzerland;Full-time;Remote;No hybrid, no German required"
+            )
+            return ConversationHandler.END
+
+    async def one_time_deep_search_confirm(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        input_text = update.message.text.strip()
+        if input_text.lower() == 'no':
+            context.user_data.pop('one_time_search_pending', None)
+            await update.message.reply_text("One-time deep search cancelled.")
+            return ConversationHandler.END
+        if self.is_yes_response(input_text):
+            job_search_data = context.user_data.pop('one_time_search_pending', None)
+            if job_search_data:
+                try:
+                    await self.job_search_manager.execute_one_time_search(job_search_data, update.effective_user.id)
+                except Exception as e:
+                    logger.error(f"Error executing one-time search: {e}")
+                    await update.message.reply_text(
+                        "Sorry, there was an error executing your deep search. Please try again."
+                    )
+                await update.message.reply_text("🔍 Starting deep search... This may take a moment. Expect results within a few minutes.")
+            return ConversationHandler.END
+        await update.message.reply_text("Please type 'yes' to confirm or 'no' to cancel the deep search.")
+        return ONE_TIME_DEEP_SEARCH_CONFIRM  

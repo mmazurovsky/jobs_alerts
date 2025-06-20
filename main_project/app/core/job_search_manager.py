@@ -2,13 +2,15 @@
 Job search manager for handling user job searches.
 """
 import logging
+import os
 from typing import Dict, List, Optional
 import uuid
-from shared.data import JobSearchOut, JobSearchIn, JobSearchRemove, JobType, RemoteType, StreamManager, TimePeriod, StreamType, StreamEvent
+from shared.data import JobSearchOut, JobSearchIn, JobSearchRemove, JobType, RemoteType, StreamManager, TimePeriod, StreamType, StreamEvent, SearchJobsParams
 from main_project.app.core.stores.job_search_store import JobSearchStore
 import asyncio
 
 from main_project.app.schedulers.job_search_scheduler import JobSearchScheduler
+from main_project.app.scraper_client import search_jobs_via_scraper
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,7 @@ class JobSearchManager:
                 time_period=search_in.time_period,
                 user_id=search_in.user_id,
                 blacklist=search_in.blacklist,
+                filter_text=search_in.filter_text,
             )
             logger.info(f"Added new job search from user: {search.to_log_string()}")
             # Save to MongoDB first
@@ -71,6 +74,43 @@ class JobSearchManager:
             return search.id
         except Exception as e:
             logger.error(f"Error adding job search: {e}")
+            raise
+    
+    async def execute_one_time_search(self, job_search: JobSearchIn, user_id: int) -> None:
+        """Execute a one-time search without saving it permanently.
+        
+        Args:
+            search_in: Job search parameters
+            user_id: Telegram user ID for sending results
+        """
+        try:
+            logger.info(f"Executing one-time search for user {user_id}: {job_search.job_title} in {job_search.location}")
+
+            base_url = os.getenv("CALLBACK_URL")
+            callback_url = base_url.rstrip("/") + "/job_results_callback"
+            
+            params = SearchJobsParams(
+                keywords=job_search.job_title,
+                location=job_search.location,
+                job_types=[jt.label for jt in job_search.job_types],
+                remote_types=[rt.label for rt in job_search.remote_types],
+                time_period="1 month",  
+                filter_text=getattr(job_search, 'filter_text', None),
+                callback_url=callback_url,
+                job_search_id=None,
+                user_id=job_search.user_id,
+            )
+            
+            # Execute search via scraper
+            response = await search_jobs_via_scraper(params)
+            
+            if response.status_code == 200:
+                logger.info(f"One-time search initiated successfully for user {user_id}")
+            else:
+                logger.error(f"One-time search failed for user {user_id}: {response.status_code} - {response.text}")
+                
+        except Exception as e:
+            logger.error(f"Error executing one-time search for user {user_id}: {e}")
             raise
     
     async def delete_search(self, job_search_remove: JobSearchRemove) -> bool:

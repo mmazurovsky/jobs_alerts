@@ -9,6 +9,11 @@ COPY shared/ ./shared/
 
 RUN pip install --no-cache-dir -r linkedin_scraper_service/requirements.txt
 
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app/linkedin_scraper_service/app:/app
+
+# Debug: list contents of the app directory
+RUN ls -l /app/linkedin_scraper_service/app
+
+EXPOSE 8002
 
 CMD ["uvicorn", "linkedin_scraper_service.app.main:app", "--host", "0.0.0.0", "--port", "8002", "--timeout-keep-alive", "300", "--timeout-graceful-shutdown", "300"]

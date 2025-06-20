@@ -11,6 +11,7 @@ import re
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+import pytz
 
 from shared.data import JobSearchOut, StreamManager, TimePeriod, JobListing, StreamType, StreamEvent, SearchJobsParams
 from main_project.app.core.stores.sent_jobs_store import SentJobsStore
@@ -25,7 +26,7 @@ class JobSearchScheduler:
     def __init__(self, stream_manager: StreamManager, sent_jobs_store: SentJobsStore):
         """Initialize the scheduler."""
         self._stream_manager = stream_manager
-        self._scheduler = AsyncIOScheduler()
+        self._scheduler = AsyncIOScheduler(timezone=pytz.UTC)
         self._active_searches: Dict[str, JobSearchOut] = {}  # search_id -> JobSearch
         self._sent_jobs_store = sent_jobs_store
         self._semaphore = asyncio.Semaphore(4)  # Limit to 4 concurrent jobs
@@ -145,16 +146,19 @@ class JobSearchScheduler:
         # Build callback URL by appending the path to the base URL from env
         base_url = os.getenv("CALLBACK_URL")
         callback_url = base_url.rstrip("/") + "/job_results_callback"
+        
         params = SearchJobsParams(
             keywords=job_search.job_title,
             location=job_search.location,
             job_types=log_data["job_types"],
             remote_types=log_data["remote_types"],
             time_period=log_data["time_period"],
-        ).model_dump(exclude_none=True)
-        params["callback_url"] = callback_url
-        params["job_search_id"] = job_search.id
-        params["user_id"] = job_search.user_id
+            filter_text=getattr(job_search, 'filter_text', None),
+            callback_url=callback_url,
+            job_search_id=job_search.id,
+            user_id=job_search.user_id,
+        )
+        
         response = await search_jobs_via_scraper(params)
         log_data["callback_url"] = callback_url
         log_data["status_code"] = response.status_code

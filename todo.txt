@@ -1,3 +1,11 @@
+remove calls to translate from logging
+fix retries for job details fetch failure
+log filtered out jobs with reasons
+reduce proxy gb usage
+
+
+
+
 add premium
 hide some options behind premium
 add only 7 days trial period with limited features
