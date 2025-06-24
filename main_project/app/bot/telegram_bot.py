@@ -1,5 +1,5 @@
 """
-Telegram bot module.
+Refactored Telegram bot module with LLM agent integration.
 """
 import logging
 import os
@@ -9,7 +9,6 @@ from telegram.ext import (
     Application,
     CommandHandler,
     ContextTypes,
-    ConversationHandler,
     MessageHandler,
     filters,
 )
@@ -18,16 +17,12 @@ from datetime import datetime
 import asyncio
 
 from shared.data import (
-    JobSearchOut, JobListing, JobSearchIn, JobType, RemoteType, TimePeriod,
-    StreamType, StreamEvent, StreamManager, JobSearchRemove,
-    job_types_list, remote_types_list, time_periods_list
+    JobListing, StreamType, StreamEvent, StreamManager
 )
 from main_project.app.core.job_search_manager import JobSearchManager
+from main_project.app.llm.job_search_agent import JobSearchAgent
 
 logger = logging.getLogger(__name__)
-
-# Conversation states
-TITLE, LOCATION, JOB_TYPES, REMOTE_TYPES, TIME_PERIOD, FILTER_TEXT, CONFIRM, ONE_TIME_DEEP_SEARCH_CONFIRM = range(8)
 
 try:
     ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID"))
@@ -35,7 +30,7 @@ except (TypeError, ValueError):
     raise RuntimeError("ADMIN_USER_ID environment variable must be set and be an integer.")
 
 class TelegramBot:
-    """Telegram bot for managing job searches."""
+    """Telegram bot for managing job searches with LLM agent."""
     
     def __init__(self, token: str, stream_manager: StreamManager, job_search_manager: JobSearchManager):
         """Initialize the bot with token and MongoDB manager."""
@@ -43,6 +38,10 @@ class TelegramBot:
         self.stream_manager = stream_manager
         self.job_search_manager = job_search_manager
         self.application = Application.builder().token(token).build()
+        
+        # Initialize LLM agent
+        self.llm_agent = JobSearchAgent(job_search_manager)
+        
         self._setup_handlers()
 
         # Subscribe to send message stream
@@ -54,351 +53,212 @@ class TelegramBot:
         )
     
     def _setup_handlers(self):
-        """Set up all command and conversation handlers."""
-        # Command handlers
+        """Set up all command and message handlers."""
+        # Basic command handlers
         self.application.add_handler(CommandHandler("start", self.start))
         self.application.add_handler(CommandHandler("help", self.help))
-        self.application.add_handler(CommandHandler("list", self.list_searches))
-        self.application.add_handler(CommandHandler("delete", self.delete_search))
-        self.application.add_handler(CommandHandler("newRaw", self.new_raw_search))
-        # Remove direct add_handler for oneTimeDeepSearch
-        # Add ConversationHandler for one-time deep search
-        one_time_deep_search_conv = ConversationHandler(
-            entry_points=[CommandHandler("oneTimeDeepSearch", self.one_time_deep_search)],
-            states={
-                ONE_TIME_DEEP_SEARCH_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.one_time_deep_search_confirm)],
-            },
-            fallbacks=[CommandHandler("cancel", self.cancel)],
-            per_message=False
+        
+        # Handle all non-command messages with LLM agent
+        self.application.add_handler(
+            MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message)
         )
-        self.application.add_handler(one_time_deep_search_conv)
-        # Conversation handler for creating new job searches
-        conv_handler = ConversationHandler(
-            entry_points=[CommandHandler("new", self.new_search)],
-            states={
-                TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.title)],
-                LOCATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.location)],
-                JOB_TYPES: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.job_types)],
-                REMOTE_TYPES: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.remote_types)],
-                TIME_PERIOD: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.time_period)],
-                FILTER_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.filter_text)],
-                CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.confirm)],
-            },
-            fallbacks=[
-                CommandHandler("cancel", self.cancel),
-                CommandHandler("new", self.new_search),
-                CommandHandler("list", self.list_searches),
-                CommandHandler("delete", self.delete_search),
-                CommandHandler("help", self.help),
-                CommandHandler("start", self.start),
-                CommandHandler("oneTimeDeepSearch", self.one_time_deep_search)
-            ],
-            per_message=False
+        
+        # Handle unknown commands by redirecting to LLM
+        self.application.add_handler(
+            MessageHandler(filters.COMMAND, self.handle_unknown_command)
         )
-        self.application.add_handler(conv_handler)
     
-    # Command handlers
+    # Basic command handlers
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Send a message when the command /start is issued."""
-        self._clear_conversation_state(context)
         user = update.effective_user
-        await update.message.reply_text(
-            f"Hi {user.first_name}! I'm your job search assistant. "
-            "Use /help to see available commands."
-        )
+        
+        try:
+            # Get dynamic content from tool registry if available
+            if hasattr(self.llm_agent, 'tool_registry') and self.llm_agent.tool_registry:
+                # Generate dynamic start message from tool capabilities
+                start_message = self._generate_start_message(user.first_name)
+            else:
+                # Minimal fallback
+                start_message = f"👋 Hi {user.first_name}! I'm your AI-powered job search assistant.\n\n" \
+                               "🤖 Just talk to me naturally about what you want to do with job searches!\n\n" \
+                               "📚 Use /help to see what I can help you with."
+            
+            await update.message.reply_text(start_message, parse_mode=ParseMode.MARKDOWN)
+            
+        except Exception as e:
+            logger.error(f"Error in start command: {e}")
+            # Ultimate fallback
+            await update.message.reply_text(
+                f"👋 Hi {user.first_name}! I'm your job search assistant. Use /help to see what I can do!"
+            )
     
     async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Send a message when the command /help is issued."""
-        self._clear_conversation_state(context)
-        help_text = (
-            "Available commands:\n"
-            "/new - Create a new job search\n"
-            "/newRaw - Create a new job search with a single command (advanced)\n"
-            "/oneTimeDeepSearch - Perform immediate deep search with LLM filtering\n"
-            "/list - List your job searches\n"
-            "/delete - Delete a job search\n"
-            "/help - Show this help message\n\n"
-            "*Advanced: /newRaw usage*\n"
-            "/newRaw <job_title>;<location>;<job_type>;<remote_type>;<time_period>[;<filter_prompt>]\n"
-            "Example: /newRaw Software Engineer;Germany;Full-time;Remote;5 minutes;Senior level no German required\n\n"
-            "*One-time deep search: /oneTimeDeepSearch usage*\n"
-            "/oneTimeDeepSearch <job_title>;<location>;<job_type>;<remote_type>;<filter_prompt>\n"
-            "Example: /oneTimeDeepSearch Python Developer;Remote;Full-time;Remote;Don't include hybrid options, don't include jobs that require German language, don't include analyst jobs\n\n"
-            "Available values:\n"
-            "- Job types: Full-time, Part-time, Contract, Temporary, Internship\n"
-            "- Remote types: On-site, Remote, Hybrid\n"
-            "- Time periods: 5 minutes, 10 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours, 24 hours\n"
-            "- Filter prompt: Optional freeform text (max 300 chars) for LLM-based job filtering"
-        )
-        await update.message.reply_text(help_text)
-    
-    async def list_searches(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """List all job searches for the user."""
-        self._clear_conversation_state(context)
+        """Send comprehensive help message with detailed guidance."""
         try:
-            searches: List[JobSearchOut] = await self.job_search_manager.get_user_searches(update.effective_user.id)
+            # Get dynamic help from tool registry with enhanced presentation
+            if hasattr(self.llm_agent, 'tool_registry') and self.llm_agent.tool_registry:
+                enhanced_help = """🤖 **AI Job Search Assistant - Complete Guide**
+
+I'm your intelligent job search companion! I understand natural language and can help you with all aspects of job searching.
+
+🎯 **How I Work:**
+• **Natural Conversation**: Talk to me like you would a human assistant
+• **Smart Understanding**: I interpret your intent from casual language  
+• **Guided Process**: I'll ask for any missing information step-by-step
+• **Confirmation Safety**: I always confirm before making changes
+• **Memory**: I remember our conversation context
+
+💬 **Communication Tips:**
+• Be conversational: "I need help finding Python jobs"
+• Ask questions: "What job searches do I have active?"
+• Request help: "Help me create a new search"
+• Give feedback: "That's not what I meant, let me clarify..."
+
+📚 **Detailed Help:**
+Say "help with [topic]" for specific guidance:
+• "help with creating searches" - Learn about setting up job alerts
+• "help with finding jobs" - Understand immediate job searching
+• "help with managing searches" - Learn to view, edit, and delete alerts
+
+🔧 **Troubleshooting:**
+• If I misunderstand, just clarify: "No, I meant..."
+• For complex requests, break them into smaller parts
+• I'll guide you if you're missing required information
+
+"""
+                # Get tool-specific help
+                tool_help = self.llm_agent.get_tool_help()
+                full_help = enhanced_help + "\n" + tool_help
+                
+                # Add footer with more guidance
+                full_help += """\n
+💡 **Pro Tips:**
+• I learn from context - reference previous messages
+• I can handle typos and informal language
+• Feel free to change your mind or ask follow-up questions
+• Use /start to see the welcome message again
+
+**Ready to start?** Just tell me what you want to do with job searching!"""
+                
+                await self._send_message_with_splitting(update.effective_user.id, full_help)
+            else:
+                # Enhanced fallback with more context
+                fallback_help = self._generate_enhanced_fallback_help()
+                await self._send_message_with_splitting(update.effective_user.id, fallback_help)
+        except Exception as e:
+            logger.error(f"Error showing help: {e}")
+            # Generate minimal help without hardcoded tool descriptions
+            fallback_help = self._generate_fallback_help()
+            await update.message.reply_text(fallback_help, parse_mode=ParseMode.MARKDOWN)
+
+    # Message handlers
+    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle all non-command messages with LLM agent."""
+        progress_message = None
+        try:
+            user_message = update.message.text
+            user_id = update.effective_user.id
             
-            if not searches:
-                await update.message.reply_text("You don't have any job searches yet.")
-                return
+            # Show typing indicator
+            await update.message.reply_chat_action("typing")
+            
+            # Check for specific help requests first
+            if self._is_help_request(user_message):
+                tool_name = self._extract_tool_name_from_help(user_message)
+                if tool_name and hasattr(self.llm_agent, 'tool_registry') and self.llm_agent.tool_registry:
+                    progress_message = await update.message.reply_text("📚 Gathering help information...")
+                    help_response = self.llm_agent.get_tool_help(tool_name)
+                    await progress_message.edit_text("📚 Help information ready!")
+                    await self._send_message_with_splitting(user_id, help_response)
+                    return
+            
+            # Initialize LLM agent if not already done
+            if not hasattr(self.llm_agent, 'agent_executor') or self.llm_agent.agent_executor is None:
+                initialization_msg = await update.message.reply_text("🤖 Initializing AI assistant... Please wait a moment.")
+                try:
+                    await self.llm_agent.initialize()
+                    await initialization_msg.edit_text("✅ AI assistant ready!")
+                except Exception as init_error:
+                    await initialization_msg.edit_text("❌ Failed to initialize AI assistant.")
+                    raise init_error
+            
+            # Send processing indicator
+            progress_message = await update.message.reply_text("🤔 Processing your request...")
+            
+            # Show typing periodically during processing
+            async def show_typing_periodically():
+                import asyncio
+                for _ in range(3):  # Show typing 3 times during processing
+                    await update.message.reply_chat_action("typing")
+                    await asyncio.sleep(2)
+            
+            # Start typing task
+            typing_task = asyncio.create_task(show_typing_periodically())
+            
+            try:
+                # Process with LLM agent
+                response = await self.llm_agent.chat(user_id, user_message)
                 
-            message = "Your job searches:\n\n"
-            for search in searches:
-                job_types = ", ".join(t.label for t in search.job_types)
-                remote_types = ", ".join(t.label for t in search.remote_types)
-                message += (
-                    f"ID: {search.id}\n"
-                    f"Title: {search.job_title}\n"
-                    f"Location: {search.location}\n"
-                    f"Job Types: {job_types}\n"
-                    f"Remote Types: {remote_types}\n"
-                    f"Check Frequency: {search.time_period.display_name}\n"
-                )
-                if hasattr(search, 'filter_text') and search.filter_text:
-                    message += f"Filter: {search.filter_text}\n"
-                message += f"Created At: {search.created_at}\n\n"
+                # Cancel typing task
+                typing_task.cancel()
                 
-            await update.message.reply_text(message)
+                # Update progress message
+                await progress_message.edit_text("✅ Response ready!")
+                
+                # Send response
+                await self._send_message_with_splitting(user_id, response)
+                
+            except Exception as processing_error:
+                typing_task.cancel()
+                await progress_message.edit_text("❌ Error processing request.")
+                raise processing_error
             
         except Exception as e:
-            logger.error(f"Error listing job searches: {e}")
-            await update.message.reply_text(
-                "Sorry, there was an error listing your job searches. Please try again."
-            )
-    
-    async def delete_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Delete a job search."""
-        self._clear_conversation_state(context)
-        try:
-            args = context.args
-            if not args:
-                await update.message.reply_text(
-                    "Please provide a job search ID to delete. Usage: /delete <search_id>"
-                )
-                return
-                
-            search_id = args[0]
-            
-            # Create JobSearchRemove instance and pass it directly
-            job_search_remove = JobSearchRemove(
-                user_id=update.effective_user.id,
-                search_id=search_id
-            )
+            logger.error(f"Error handling message: {e}")
+            error_response = self._generate_error_response(e, user_message)
+            if progress_message:
+                try:
+                    await progress_message.edit_text(error_response)
+                except:
+                    await update.message.reply_text(error_response)
+            else:
+                await update.message.reply_text(error_response)
 
-            await self.job_search_manager.delete_search(job_search_remove)
-            await update.message.reply_text("Your job search will be removed shortly.")
+    async def handle_unknown_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle unknown commands by redirecting to LLM agent."""
+        try:
+            command = update.message.text
+            user_id = update.effective_user.id
+            
+            # Show typing indicator
+            await update.message.reply_chat_action("typing")
+            
+            # Convert command to natural language and process with LLM
+            natural_message = f"I tried to use the command: {command}. Can you help me with what I'm trying to do?"
+            
+            # Initialize LLM agent if not already done
+            if not hasattr(self.llm_agent, 'agent_executor') or self.llm_agent.agent_executor is None:
+                await update.message.reply_text("🤖 Initializing AI assistant... Please wait a moment.")
+                await self.llm_agent.initialize()
+            
+            # Process with LLM agent
+            response = await self.llm_agent.chat(user_id, natural_message)
+            
+            # Send response with a note about natural language
+            intro_message = f"ℹ️ I don't recognize the command `{command}`, but I can help you with natural language!\n\n"
+            full_response = intro_message + response
+            
+            await self._send_message_with_splitting(user_id, full_response)
             
         except Exception as e:
-            logger.error(f"Error deleting job search: {e}")
+            logger.error(f"Error handling unknown command: {e}")
+            # Generate examples from tools if available
+            examples_text = self._get_command_examples()
             await update.message.reply_text(
-                "Sorry, there was an error deleting your job search. Please try again."
+                f"❌ I don't recognize the command `{update.message.text}`. "
+                f"Please try describing what you want to do in natural language instead!\n\n{examples_text}"
             )
-    
-    # Conversation handlers
-    async def new_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Start the conversation for creating a new job search."""
-        self._clear_conversation_state(context)
-        await update.message.reply_text(
-            "Let's create a new job search! Please enter the job title.\n\n"
-            "Examples:\n"
-            "• Software Engineer\n"
-            "• Data Scientist"
-        )
-        return TITLE
-    
-    async def title(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Handle job title input."""
-        context.user_data['title'] = update.message.text
-        await update.message.reply_text(
-            "Now enter the location where you want to search for jobs.\n\n"
-            "Examples:\n"
-            "• United States\n"
-            "• New York City\n"
-            "• Europe"
-        )
-        return LOCATION
-    
-    async def location(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Handle location input."""
-        context.user_data['location'] = update.message.text
-        
-        # Show available job types and instructions
-        await update.message.reply_text(
-            "Select job types (you can choose multiple).\n\n"
-            f"Available job types:\n{job_types_list()}\n\n"
-            "Enter job types separated by commas, e.g.:\n"
-            "Full-time, Part-time, Contract"
-        )
-        return JOB_TYPES
-    
-    def _parse_job_types(self, job_types_str: str) -> List[JobType]:
-        return [JobType.parse(jt.strip()) for jt in job_types_str.split(',') if jt.strip()]
-
-    def _parse_remote_types(self, remote_types_str: str) -> List[RemoteType]:
-        return [RemoteType.parse(rt.strip()) for rt in remote_types_str.split(',') if rt.strip()]
-
-    def _parse_blacklist(self, blacklist_str: str) -> List[str]:
-        return [s.strip() for s in blacklist_str.split(',') if s.strip()]
-
-    def _format_confirmation_message(self, title, location, job_types, remote_types, time_period, blacklist, search_id=None, filter_text=None):
-        msg = ""
-        if search_id:
-            msg += f"Search ID: {search_id}\n"
-        msg += (
-            f"Job: {title}\n"
-            f"Location: {location}\n"
-            f"Type: {', '.join(jt.label for jt in job_types)}\n"
-            f"Remote: {', '.join(rt.label for rt in remote_types)}\n"
-            f"Check every: {time_period.display_name}\n"
-        )
-        if filter_text:
-            msg += f"Filter: {filter_text}\n"
-        return msg
-
-    async def job_types(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        input_text = update.message.text.strip()
-        selected_types = []
-        try:
-            selected_types = self._parse_job_types(input_text)
-        except Exception:
-            pass
-        context.user_data['job_types'] = selected_types
-        if not context.user_data['job_types']:
-            await update.message.reply_text(
-                "No valid job types selected. Please try again with valid job types.\n\n"
-                f"Available job types:\n{job_types_list()}\n\n"
-                "Enter job types separated by commas, e.g.:\nFull-time, Part-time, Contract"
-            )
-            return JOB_TYPES
-        await update.message.reply_text(
-            "Select remote work types (you can choose multiple).\n\n"
-            f"Available remote types:\n{remote_types_list()}\n\n"
-            "Enter remote types separated by commas, e.g.:\nRemote, Hybrid, On-site"
-        )
-        return REMOTE_TYPES
-    
-    async def remote_types(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        input_text = update.message.text.strip()
-        selected_types = []
-        try:
-            selected_types = self._parse_remote_types(input_text)
-        except Exception:
-            pass
-        context.user_data['remote_types'] = selected_types
-        if not context.user_data['remote_types']:
-            await update.message.reply_text(
-                "No valid remote types selected. Please try again with valid remote types.\n\n"
-                f"Available remote types:\n{remote_types_list()}\n\n"
-                "Enter remote types separated by commas, e.g.:\nRemote, Hybrid, On-site"
-            )
-            return REMOTE_TYPES
-        await update.message.reply_text(
-            "Select how often to check for new jobs.\n\n"
-            f"Available time periods:\n{time_periods_list()}\n\n"
-            "Enter one of the time periods above, e.g.:\n5 minutes"
-        )
-        return TIME_PERIOD
-    
-    async def time_period(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Handle time period selection."""
-        input_text = update.message.text.strip()
-        try:
-            selected_period = TimePeriod.parse(input_text)
-        except ValueError:
-            selected_period = None
-        if not selected_period:
-            await update.message.reply_text(
-                "No valid time period selected. Please try again with a valid time period.\n\n"
-                f"Available time periods:\n{time_periods_list()}\n\n"
-                "Enter one of the time periods above, e.g.:\n5 minutes"
-            )
-            return TIME_PERIOD
-        context.user_data['time_period'] = selected_period
-        await update.message.reply_text(
-            "Optional: Enter a filter prompt for LLM-based job filtering (max 300 characters).\n"
-            "This allows you to specify requirements like seniority, technologies, or restrictions.\n"
-            "For example: Don't include junior level jobs, no German should berequired\n\n"
-            "Or just type '-' to skip."
-        )
-        return FILTER_TEXT
-    
-    async def filter_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Handle filter text input."""
-        input_text = update.message.text.strip()
-        if input_text == '-' or not input_text:
-            context.user_data['filter_text'] = None
-        else:
-            if len(input_text) > 300:
-                await update.message.reply_text(
-                    "❌ Filter prompt is too long. Maximum 300 characters allowed. Please try again."
-                )
-                return FILTER_TEXT
-            context.user_data['filter_text'] = input_text
-        
-        # Show job search summary and ask for confirmation
-        job_title = context.user_data['title']
-        location = context.user_data['location']
-        job_types = context.user_data['job_types']
-        remote_types = context.user_data['remote_types']
-        time_period = context.user_data['time_period']
-        filter_text = context.user_data.get('filter_text')
-        msg = self._format_confirmation_message(job_title, location, job_types, remote_types, time_period, [], None, filter_text)
-        msg += "\nPlease confirm your job search by typing 'yes' or cancel by typing 'no'."
-        await update.message.reply_text(msg)
-        return CONFIRM
-    
-    @staticmethod
-    def is_yes_response(text: str) -> bool:
-        """Return True if the text is a 'yes' response (case-insensitive), else False."""
-        return text.strip().lower() == 'yes'
-
-    async def confirm(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        input_text = update.message.text.strip()
-        if input_text.lower() == 'no':
-            await update.message.reply_text("Job search creation cancelled.")
-            return ConversationHandler.END
-        if not self.is_yes_response(input_text):
-            await update.message.reply_text("Please type 'yes' to confirm or 'no' to cancel.")
-            return CONFIRM
-        try:
-            # Regular job search creation
-            job_title = context.user_data['title']
-            location = context.user_data['location']
-            job_types = context.user_data['job_types']
-            remote_types = context.user_data['remote_types']
-            time_period = context.user_data['time_period']
-            filter_text = context.user_data.get('filter_text')
-            job_search_in = JobSearchIn(
-                job_title=job_title,
-                location=location,
-                job_types=job_types,
-                remote_types=remote_types,
-                time_period=time_period,
-                user_id=update.effective_user.id,
-                blacklist=[],
-                filter_text=filter_text
-            )
-            search_id = await self.job_search_manager.add_search(job_search_in)
-            msg = self._format_confirmation_message(job_title, location, job_types, remote_types, time_period, [], search_id, filter_text)
-            await update.message.reply_text(msg)
-        except Exception as e:
-            logger.error(f"Error creating job search: {e}")
-            await update.message.reply_text(
-                "Sorry, there was an error creating your job search. Please try again."
-            )
-        return ConversationHandler.END
-    
-    async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Cancel the conversation."""
-        self._clear_conversation_state(context)
-        await update.message.reply_text("Job search creation cancelled.")
-        return ConversationHandler.END
-    
-    # Utility methods
-    def _clear_conversation_state(self, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Clear the conversation state."""
-        if hasattr(context, 'user_data'):
-            context.user_data.clear()
     
     # Bot lifecycle methods
     def run(self):
@@ -410,11 +270,22 @@ class TelegramBot:
         try:
             await self.application.initialize()
             await self.application.start()
+            # Initialize LLM agent in background (don't wait for it)
+            asyncio.create_task(self._initialize_llm_agent())
             await self.application.updater.start_polling()
             logger.info("Telegram bot started successfully")
         except Exception as e:
             logger.error(f"Failed to start Telegram bot: {e}")
             raise
+    
+    async def _initialize_llm_agent(self) -> None:
+        """Initialize the LLM agent in background."""
+        try:
+            await self.llm_agent.initialize()
+            logger.info("LLM agent initialized successfully")
+        except Exception as e:
+            logger.warning(f"Failed to initialize LLM agent: {e}")
+            # Don't raise - bot should still work without LLM
             
     async def stop(self) -> None:
         """Stop the bot."""
@@ -427,6 +298,7 @@ class TelegramBot:
             logger.error(f"Failed to stop Telegram bot: {e}")
             raise
 
+    # Job notification methods (preserved for system notifications)
     async def send_job_listings(self, user_id: int, jobs: List[JobListing]) -> None:
         """Send job listings to a user."""
         if not jobs:
@@ -481,7 +353,9 @@ class TelegramBot:
             f"🔗 {job.link}"
         )
 
+    # Stream event handlers (preserved for system notifications)
     async def _handle_send_log(self, event: StreamEvent) -> None:
+        """Handle log messages to admin."""
         try:
             message = event.data.get("message")
             image_path = event.data.get("image_path")
@@ -504,7 +378,7 @@ class TelegramBot:
             logger.error(f"Failed to send log to admin: {e}")
 
     async def _handle_send_message(self, event: StreamEvent):
-        """Handle message sending requests from other components"""
+        """Handle message sending requests from other components."""
         try:
             message_data = event.data
             user_id = message_data.get("user_id")
@@ -524,6 +398,7 @@ class TelegramBot:
         except Exception as e:
             logger.error(f"Error sending message: {e}")
     
+    # Message utilities (preserved for response handling)
     async def _send_message_with_splitting(self, user_id: int, message: str):
         """Send a message with automatic splitting if it's too long."""
         try:
@@ -533,7 +408,7 @@ class TelegramBot:
                 await self.application.bot.send_message(
                     chat_id=user_id,
                     text=message,
-                    parse_mode=None
+                    parse_mode=ParseMode.MARKDOWN
                 )
             else:
                 # Split the message into multiple parts
@@ -557,7 +432,7 @@ class TelegramBot:
                     await self.application.bot.send_message(
                         chat_id=user_id,
                         text=current_message.rstrip(),
-                        parse_mode=None
+                        parse_mode=ParseMode.MARKDOWN
                     )
                     part_number += 1
                 
@@ -586,162 +461,280 @@ class TelegramBot:
             await self.application.bot.send_message(
                 chat_id=user_id,
                 text=current_message.rstrip(),
-                parse_mode=None
+                parse_mode=ParseMode.MARKDOWN
             )
+    
+    def _is_help_request(self, message: str) -> bool:
+        """Check if message is a help request for a specific operation."""
+        message_lower = message.lower()
+        help_patterns = [
+            "help with",
+            "how to",
+            "how do i",
+            "what is",
+            "explain",
+            "show me how to",
+            "guide me",
+            "instructions for"
+        ]
+        return any(pattern in message_lower for pattern in help_patterns)
+    
+    def _extract_tool_name_from_help(self, message: str) -> Optional[str]:
+        """Extract tool name from a help request message."""
+        message_lower = message.lower()
+        
+        # Map common phrases to tool names
+        tool_mappings = {
+            "list": "list_job_searches",
+            "listing": "list_job_searches", 
+            "show": "list_job_searches",
+            "display": "list_job_searches",
+            "view": "list_job_searches",
+            "create": "create_job_search",
+            "creating": "create_job_search",
+            "add": "create_job_search",
+            "set up": "create_job_search",
+            "setup": "create_job_search",
+            "delete": "delete_job_search",
+            "deleting": "delete_job_search", 
+            "remove": "delete_job_search",
+            "cancel": "delete_job_search",
+            "details": "get_job_search_details",
+            "detail": "get_job_search_details",
+            "info": "get_job_search_details",
+            "information": "get_job_search_details",
+            "search": "one_time_search",
+            "searching": "one_time_search",
+            "find": "one_time_search",
+            "one time": "one_time_search",
+            "immediate": "one_time_search"
+        }
+        
+        for phrase, tool_name in tool_mappings.items():
+            if phrase in message_lower:
+                return tool_name
+        
+        return None 
 
-    async def new_raw_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    def _generate_start_message(self, user_name: str) -> str:
+        """Generate comprehensive welcoming start message using tool registry."""
         try:
-            raw_input = update.message.text.split('/newRaw ')[1].strip()
-            parts = raw_input.split(';')
-            if len(parts) < 5 or len(parts) > 6:
-                await update.message.reply_text(
-                    "Invalid format. Please use:\n"
-                    "/newRaw <job_title>;<location>;<job_type>;<remote_type>;<time_period>[;<filter_prompt>]\n\n"
-                    "Example: /newRaw Software Engineer;Germany;Full-time,Part-time;Remote,Hybrid;5 minutes;No requirement about German language\n\n"
-                    "Available values:\n"
-                    "- Job types: Full-time, Part-time, Contract, Temporary, Internship\n"
-                    "- Remote types: On-site, Remote, Hybrid\n"
-                    "- Time periods: 5 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours, 24 hours\n"
-                    "- Filter prompt: Optional freeform text (max 300 chars) for LLM-based job filtering"
-                )
-                return
-            title, location, job_type, remote_types, time_period = parts[:5]
-            filter_text = None
-            if len(parts) == 6:
-                filter_text = parts[5].strip()
-                if len(filter_text) > 300:
-                    await update.message.reply_text(
-                        "❌ Filter prompt is too long. Maximum 300 characters allowed."
-                    )
-                    return
-            job_type_enums = self._parse_job_types(job_type)
-            remote_type_enums = self._parse_remote_types(remote_types)
-            time_period_enum = TimePeriod.parse(time_period.strip())
-            job_search_in = JobSearchIn(
-                job_title=title.strip(),
-                location=location.strip(),
-                job_types=job_type_enums,
-                remote_types=remote_type_enums,
-                time_period=time_period_enum,
-                user_id=update.effective_user.id,
-                blacklist=[],
-                filter_text=filter_text
-            )
-            search_id = await self.job_search_manager.add_search(job_search_in)
-            msg = self._format_confirmation_message(title, location, job_type_enums, remote_type_enums, time_period_enum, [], search_id, filter_text)
-            await update.message.reply_text(msg)
-        except ValueError as e:
-            await update.message.reply_text(
-                f"❌ Error: {str(e)}\n\n"
-                "Please use the correct format:\n"
-                "/newRaw <job_title>;<location>;<job_type(s)>;<remote_type(s)>;<time_period>[;<filter_prompt>]\n\n"
-                "Example: /newRaw Software Engineer;Germany;Full-time,Part-time;Remote,Hybrid;5 minutes;Senior level no German required\n\n"
-                "Available values:\n"
-                "- Job types: Full-time, Part-time, Contract, Temporary, Internship\n"
-                "- Remote types: On-site, Remote, Hybrid\n"
-                "- Time periods: 5 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours, 24 hours\n"
-                "- Filter prompt: Optional freeform text (max 300 chars) for LLM-based job filtering"
-            )
+            # Create a more welcoming and comprehensive onboarding message
+            base_message = f"👋 **Welcome {user_name}!** I'm your AI-powered job search assistant.\n\n"
+            
+            # Explain AI capabilities clearly
+            base_message += "🤖 **What makes me special:**\n" \
+                           "• I understand **natural language** - just talk to me like a person!\n" \
+                           "• I'll guide you through each step and ask for confirmation\n" \
+                           "• I remember our conversation and provide contextual help\n" \
+                           "• No need to learn complex commands - I speak human! 😊\n\n"
+            
+            # Get capabilities from tools with better formatting
+            if hasattr(self.llm_agent, 'tool_registry') and self.llm_agent.tool_registry:
+                base_message += "🎯 **What I can help you with:**\n"
+                tools_summary = self._get_tools_summary()
+                if tools_summary:
+                    base_message += tools_summary
+                
+                # Add conversation examples with more context
+                examples = self._get_tool_examples()
+                if examples:
+                    base_message += f"\n\n💬 **Try saying things like:**\n{examples}\n"
+            
+            # Add onboarding tips and next steps
+            base_message += "\n\n✨ **Getting Started Tips:**\n" \
+                           "• Ask me questions naturally: \"Can you show me my searches?\"\n" \
+                           "• I'll ask for any missing information I need\n" \
+                           "• Say \"help with [topic]\" for detailed guidance\n" \
+                           "• I'll always confirm before making changes\n\n" \
+                           "📚 Use /help anytime for detailed information.\n\n" \
+                           "**Ready to get started?** What would you like to do with job searching today?"
+            
+            return base_message
+            
         except Exception as e:
-            await update.message.reply_text(
-                f"❌ Error creating job search: {str(e)}\n\n"
-                "Please use the correct format:\n"
-                "/newRaw <job_title>;<location>;<job_type(s)>;<remote_type(s)>;<time_period>[;<filter_prompt>]\n\n"
-                "Example: /newRaw Software Engineer;Germany;Full-time,Part-time;Remote,Hybrid;5 minutes;Senior level no German required\n\n"
-                "Available values:\n"
-                "- Job types: Full-time, Part-time, Contract, Temporary, Internship\n"
-                "- Remote types: On-site, Remote, Hybrid\n"
-                "- Time periods: 5 minutes, 15 minutes, 30 minutes, 1 hour, 4 hours, 24 hours\n"
-                "- Filter prompt: Optional freeform text (max 300 chars) for LLM-based job filtering"
-            )
+            logger.error(f"Error generating start message: {e}")
+            # Enhanced fallback with onboarding context
+            return f"👋 Welcome {user_name}! I'm your AI-powered job search assistant.\n\n" \
+                   "🤖 **I understand natural language** - just talk to me normally!\n\n" \
+                   "I can help you create job search alerts, find jobs immediately, manage your searches, and more.\n\n" \
+                   "Just tell me what you want to do, like: \"I want to search for Python jobs in Berlin\"\n\n" \
+                   "📚 Use /help to see what I can help you with. What would you like to do?"
 
-    async def one_time_deep_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Handle one-time deep search command with required filter prompt and confirmation state."""
-        self._clear_conversation_state(context)
+    def _get_tools_summary(self) -> str:
+        """Get a brief summary of all tool capabilities."""
         try:
-            raw_input = update.message.text.split('/oneTimeDeepSearch ')[1].strip()
-            parts = raw_input.split(';')
-            if len(parts) != 5:
-                await update.message.reply_text(
-                    "Invalid format. Please use:\n"
-                    "/oneTimeDeepSearch <job_title>;<location>;<job_type>;<remote_type>;<filter_prompt>\n\n"
-                    "Example: /oneTimeDeepSearch Python Developer;Switzerland;Full-time;Remote;Senior backend role no hybrid\n\n"
-                    "Available values:\n"
-                    "- Job types: Full-time, Part-time, Contract, Temporary, Internship\n"
-                    "- Remote types: On-site, Remote, Hybrid\n"
-                    "- Filter prompt: Required freeform text (max 300 chars) for LLM-based job filtering"
-                )
-                return ConversationHandler.END
-            title, location, job_type, remote_types, filter_text = parts
-            filter_text = filter_text.strip()
-            if not filter_text:
-                await update.message.reply_text(
-                    "❌ Filter prompt is required for deep search."
-                )
-                return ConversationHandler.END
-            if len(filter_text) > 300:
-                await update.message.reply_text(
-                    "❌ Filter prompt is too long. Maximum 300 characters allowed."
-                )
-                return ConversationHandler.END
-            job_type_enums = self._parse_job_types(job_type)
-            remote_type_enums = self._parse_remote_types(remote_types)
-            job_search_data = JobSearchIn(
-                job_title=title.strip(),
-                location=location.strip(),
-                job_types=job_type_enums,
-                remote_types=remote_type_enums,
-                time_period=TimePeriod.parse("1 month"),  # TODO: parse from user
-                user_id=update.effective_user.id,
-                blacklist=[],
-                filter_text=filter_text
-            )
-            msg = (
-                "🔍 One-time Deep Search Confirmation:\n\n"
-                f"Job Title: {job_search_data.job_title}\n"
-                f"Location: {job_search_data.location}\n"
-                f"Job Types: {', '.join(jt.label for jt in job_search_data.job_types)}\n"
-                f"Remote Types: {', '.join(rt.label for rt in job_search_data.remote_types)}\n"
-                f"Filter Prompt: {job_search_data.filter_text}\n\n"
-                "This will search immediately and return results. Confirm with 'yes' or cancel with 'no'."
-            )
-            await update.message.reply_text(msg)
-            context.user_data['one_time_search_pending'] = job_search_data
-            return ONE_TIME_DEEP_SEARCH_CONFIRM
-        except ValueError as e:
-            await update.message.reply_text(
-                f"❌ Error: {str(e)}\n\n"
-                "Please use the correct format:\n"
-                "/oneTimeDeepSearch <job_title>;<location>;<job_type(s)>;<remote_type(s)>;<filter_prompt>\n\n"
-                "Example: /oneTimeDeepSearch Python Developer;Switzerland;Full-time;Remote;No hybrid, no German required"
-            )
-            return ConversationHandler.END
+            if not hasattr(self.llm_agent, 'tool_registry') or not self.llm_agent.tool_registry:
+                return ""
+            
+            summaries = []
+            for tool_name, tool in self.llm_agent.tool_registry.tools.items():
+                doc = tool.get_documentation()
+                if doc and doc.purpose:
+                    # Create a bullet point from the purpose
+                    purpose = doc.purpose.strip()
+                    if not purpose.startswith('•'):
+                        purpose = f"• {purpose}"
+                    summaries.append(purpose)
+            
+            return "\n".join(summaries) if summaries else ""
+            
         except Exception as e:
-            await update.message.reply_text(
-                f"❌ Error: {str(e)}\n\n"
-                "Please use the correct format:\n"
-                "/oneTimeDeepSearch <job_title>;<location>;<job_type(s)>;<remote_type(s)>;<filter_prompt>"
-                "Example: /oneTimeDeepSearch Python Developer;Switzerland;Full-time;Remote;No hybrid, no German required"
-            )
-            return ConversationHandler.END
+            logger.error(f"Error getting tools summary: {e}")
+            return ""
 
-    async def one_time_deep_search_confirm(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        input_text = update.message.text.strip()
-        if input_text.lower() == 'no':
-            context.user_data.pop('one_time_search_pending', None)
-            await update.message.reply_text("One-time deep search cancelled.")
-            return ConversationHandler.END
-        if self.is_yes_response(input_text):
-            job_search_data = context.user_data.pop('one_time_search_pending', None)
-            if job_search_data:
-                try:
-                    await self.job_search_manager.execute_one_time_search(job_search_data, update.effective_user.id)
-                except Exception as e:
-                    logger.error(f"Error executing one-time search: {e}")
-                    await update.message.reply_text(
-                        "Sorry, there was an error executing your deep search. Please try again."
-                    )
-                await update.message.reply_text("🔍 Starting deep search... This may take a moment. Expect results within a few minutes.")
-            return ConversationHandler.END
-        await update.message.reply_text("Please type 'yes' to confirm or 'no' to cancel the deep search.")
-        return ONE_TIME_DEEP_SEARCH_CONFIRM  
+    def _get_tool_examples(self) -> str:
+        """Get examples from all tools."""
+        try:
+            if not hasattr(self.llm_agent, 'tool_registry') or not self.llm_agent.tool_registry:
+                return ""
+            
+            all_examples = []
+            for tool_name, tool in self.llm_agent.tool_registry.tools.items():
+                doc = tool.get_documentation()
+                if doc and doc.examples:
+                    # Take first 2 examples from each tool
+                    for example in doc.examples[:2]:
+                        all_examples.append(f"- \"{example}\"")
+            
+            return "\n".join(all_examples) if all_examples else ""
+            
+        except Exception as e:
+            logger.error(f"Error getting tool examples: {e}")
+            return ""
+
+    def _generate_enhanced_fallback_help(self) -> str:
+        """Generate enhanced fallback help with comprehensive guidance."""
+        return """🤖 **AI Job Search Assistant - Guide**
+
+I'm your intelligent job search companion! I understand natural language and can help you with job searching.
+
+🎯 **How I Work:**
+• **Natural Conversation**: Talk to me like you would a human assistant
+• **Smart Understanding**: I interpret your intent from casual language  
+• **Guided Process**: I'll ask for any missing information step-by-step
+• **Confirmation Safety**: I always confirm before making changes
+
+💬 **What You Can Say:**
+• "Show me my job searches"
+• "Create a new search for Python developer jobs in Berlin"
+• "Find React developer jobs for me now"
+• "Delete my old job alert"
+• "Help me set up a new search"
+
+📚 **Getting Help:**
+• Say "help with [topic]" for specific guidance
+• I'll guide you through each process step-by-step
+• Just ask naturally: "How do I create a search?"
+
+💡 **Tips:**
+• Be conversational and natural
+• I can handle typos and informal language
+• Feel free to ask follow-up questions
+• I'll remember our conversation context
+
+**Ready to start?** Just tell me what you want to do with job searching!"""
+
+    def _generate_fallback_help(self) -> str:
+        """Generate minimal fallback help without hardcoded tool descriptions."""
+        return """🤖 **AI Job Search Assistant**
+
+I'm your natural language job search assistant! Just talk to me like you would talk to a person.
+
+I understand natural language, so you don't need to use specific commands. Just tell me what you want to do!
+
+For example, you can say things like:
+- "Show me my searches"
+- "Create a new job alert"
+- "Find jobs for me now"
+
+Use /help for more detailed assistance."""
+
+    def _get_command_examples(self) -> str:
+        """Get examples for unknown command responses."""
+        try:
+            if hasattr(self.llm_agent, 'tool_registry') and self.llm_agent.tool_registry:
+                examples = self._get_tool_examples()
+                if examples:
+                    return f"**For example:**\n{examples}"
+            
+            # Minimal fallback examples
+            return """**For example:**
+- "Show me my job searches"
+- "Create a new search for Python jobs"
+- "Find jobs for me now\""""
+            
+        except Exception as e:
+            logger.error(f"Error getting command examples: {e}")
+            return """**For example:**
+- "Show me my searches"
+- "Create a new job alert"
+- "Find jobs for me now\""""
+
+    def _generate_error_response(self, error: Exception, user_message: str) -> str:
+        """Generate contextual error response based on the error and user message."""
+        error_str = str(error).lower()
+        
+        # Categorize errors and provide helpful responses
+        if "api" in error_str or "connection" in error_str:
+            return """❌ **Connection Issue**
+
+I'm having trouble connecting to my AI service. This is usually temporary.
+
+**What you can do:**
+• Try your request again in a moment
+• Check if the message is clear and specific
+• Use /help to see what I can assist with
+
+Please try again in a few seconds!"""
+        
+        elif "timeout" in error_str:
+            return """⏱️ **Processing Timeout**
+
+Your request took too long to process. This can happen with complex queries.
+
+**What you can do:**
+• Try breaking your request into smaller parts
+• Be more specific about what you want
+• Try again - the system may be busy
+
+Please try a simpler version of your request!"""
+        
+        elif "invalid" in error_str or "validation" in error_str:
+            return f"""❌ **Input Validation Issue**
+
+There seems to be an issue with your request: "{user_message[:100]}..."
+
+**What you can do:**
+• Check if you've provided all required information
+• Make sure job titles and locations are specific
+• Use /help to see examples of valid requests
+
+Would you like to try rephrasing your request?"""
+        
+        elif "not found" in error_str:
+            return """🔍 **Not Found**
+
+I couldn't find what you're looking for.
+
+**What you can do:**
+• Use "list my searches" to see your existing job alerts
+• Check if the search ID or details are correct
+• Try a different way to describe what you want
+
+Need help finding something specific?"""
+        
+        else:
+            return f"""❌ **Oops! Something went wrong**
+
+I encountered an unexpected issue while processing your request.
+
+**What you can do:**
+• Try rephrasing your request differently
+• Use simpler language or break down complex requests  
+• Use /help to see examples of what I can do
+• Try again in a moment
+
+Your request: "{user_message[:100]}{"..." if len(user_message) > 100 else ""}"
+
+I'm here to help when you're ready to try again! 🤖"""

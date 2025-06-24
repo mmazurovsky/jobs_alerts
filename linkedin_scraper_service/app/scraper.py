@@ -172,37 +172,37 @@ class LinkedInScraperGuest:
                 if cls._playwright is None:
                     cls._playwright = await async_playwright().start()
                 if launch_options is None:
-                    launch_options = {
-                        'headless': True,
-                        'args': [
-                            '--no-sandbox',
-                            '--disable-blink-features=AutomationControlled',
-                            '--disable-dev-shm-usage',
-                            '--disable-extensions',
-                            '--disable-plugins',
-                            '--disable-default-apps',
-                            '--disable-background-timer-throttling',
-                            '--disable-backgrounding-occluded-windows',
-                            '--disable-renderer-backgrounding',
-                            '--disable-features=TranslateUI',
-                            '--disable-ipc-flooding-protection',
-                            '--no-first-run',
-                            '--no-default-browser-check',
-                            '--disable-web-security',
-                            '--disable-features=VizDisplayCompositor',
-                            '--disable-infobars',
-                            '--disable-notifications',
-                            '--disable-popup-blocking',
-                            '--disable-save-password-bubble',
-                            '--disable-translate',
-                            '--disable-background-networking',
-                            '--disable-sync',
-                            '--disable-default-apps',
-                            '--disable-extensions-file-access-check',
-                            '--disable-extensions-http-throttling',
-                            '--disable-component-extensions-with-background-pages',
-                        ]
-                    }
+            launch_options = {
+                'headless': True,
+                'args': [
+                    '--no-sandbox',
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-dev-shm-usage',
+                    '--disable-extensions',
+                    '--disable-plugins',
+                    '--disable-default-apps',
+                    '--disable-background-timer-throttling',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-renderer-backgrounding',
+                    '--disable-features=TranslateUI',
+                    '--disable-ipc-flooding-protection',
+                    '--no-first-run',
+                    '--no-default-browser-check',
+                    '--disable-web-security',
+                    '--disable-features=VizDisplayCompositor',
+                    '--disable-infobars',
+                    '--disable-notifications',
+                    '--disable-popup-blocking',
+                    '--disable-save-password-bubble',
+                    '--disable-translate',
+                    '--disable-background-networking',
+                    '--disable-sync',
+                    '--disable-default-apps',
+                    '--disable-extensions-file-access-check',
+                    '--disable-extensions-http-throttling',
+                    '--disable-component-extensions-with-background-pages',
+                ]
+            }
                 cls._browser = await cls._playwright.chromium.launch(**launch_options)
             return cls._browser
 
@@ -242,10 +242,10 @@ class LinkedInScraperGuest:
                 self.logger.info(f"Using proxy: {self.proxy_config.get('server', 'configured')}")
             else:
                 self.logger.info("No proxy configured, using direct connection")
-
-            self.context = await self.browser.new_context(**context_options)
+            
+                self.context = await self.browser.new_context(**context_options)
             self.logger.info("Created new browser context")
-
+            
             # Add stealth scripts to avoid detection
             await self.context.add_init_script("""
                 Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
@@ -261,19 +261,19 @@ class LinkedInScraperGuest:
                 Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
                 Object.defineProperty(navigator, 'connection', { get: () => ({ effectiveType: '4g', rtt: 50, downlink: 10 }) });
             """)
-
-            self.logger.info("Creating new page...")
-            self.page = await self.context.new_page()
-            await stealth_async(self.page)
-            self.logger.info("Stealth script injected.")
-
+            
+                self.logger.info("Creating new page...")
+                self.page = await self.context.new_page()
+                await stealth_async(self.page)
+                self.logger.info("Stealth script injected.")
+            
             await self._block_resource_types()
             self.logger.info("Initialized Playwright context for guest scraping with human-like behavior.")
         except Exception as e:
             self.logger.error(f"Context initialization failed: {e}")
             await self._cleanup()
             raise
-
+    
     async def _cleanup(self):
         """Clean up context and page resources only."""
         self.logger.info("Cleaning up context and page resources...")
@@ -381,21 +381,21 @@ class LinkedInScraperGuest:
                                 current_page = await self.context.new_page()
                                 await stealth_async(current_page)
                     
-                    api_url = f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
-                    public_url = f"https://www.linkedin.com/jobs/view/{job_id}/"
+            api_url = f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
+            public_url = f"https://www.linkedin.com/jobs/view/{job_id}/"
                     
                     await current_page.goto(api_url, timeout=30000, wait_until='domcontentloaded')
                     await self._random_delay(1, 2)  # Reduced delay for parallel processing
                     
                     # Extract job details with updated selectors
                     title_el = await current_page.query_selector('body > section > div > div.top-card-layout__entity-info-container.flex.flex-wrap.papabear\\:flex-nowrap > div > a > h2')
-                    title = await title_el.inner_text() if title_el else ''
+            title = await title_el.inner_text() if title_el else ''
                     
                     company_el = await current_page.query_selector('body > section > div > div.top-card-layout__entity-info-container.flex.flex-wrap.papabear\\:flex-nowrap > div > h4 > div:nth-child(1) > span:nth-child(1) > a')
-                    company = await company_el.inner_text() if company_el else ''
+            company = await company_el.inner_text() if company_el else ''
                     
                     location_el = await current_page.query_selector('body > section > div > div.top-card-layout__entity-info-container.flex.flex-wrap.papabear\\:flex-nowrap > div > h4 > div:nth-child(1) > span.topcard__flavor.topcard__flavor--bullet')
-                    location = await location_el.inner_text() if location_el else ''
+            location = await location_el.inner_text() if location_el else ''
                     
                     created_ago_el = await current_page.query_selector('body > section > div > div.top-card-layout__entity-info-container.flex.flex-wrap.papabear\\:flex-nowrap > div > h4 > div:nth-child(2) > span')
                     created_ago = await created_ago_el.inner_text() if created_ago_el else ''
@@ -432,16 +432,16 @@ class LinkedInScraperGuest:
                     self.logger.info(f"  -> title='{title}', company='{company}', location='{location}', created_ago='{created_ago}'")
                     self.logger.info(f"  -> public_url={public_url}")
                     
-                    return ShortJobListing(
-                        title=title.strip(),
-                        company=company.strip(),
-                        location=location.strip(),
-                        link=public_url,
-                        created_ago=created_ago.strip(),
+            return ShortJobListing(
+                title=title.strip(),
+                company=company.strip(),
+                location=location.strip(),
+                link=public_url,
+                created_ago=created_ago.strip(),
                         description=combined_description
-                    )
+            )
                     
-                except Exception as e:
+        except Exception as e:
                     current_url = current_page.url if current_page else api_url
                     
                     self.logger.error(f"Error getting job details for job_id={job_id} from URL={current_url} (attempt {attempt + 1}): {e}")
@@ -487,7 +487,7 @@ class LinkedInScraperGuest:
                 try:
                     # Process the job with dedicated page - return tuple with job_id to maintain mapping
                     job = await self._get_job_details(job_id, page=job_page)
-                    if job:
+            if job:
                         self.logger.info(f"Task {task_index}: Job details for job_id={job_id} found")
                         return (job_id, job)
                     else:
@@ -631,7 +631,7 @@ class LinkedInScraperGuest:
         }
         
         # Add location if provided
-        if location:
+                if location:
             params["location"] = location
         
         # Add job type filters (f_JT)
@@ -679,7 +679,7 @@ class LinkedInScraperGuest:
             try:
                 # Navigate to the API endpoint
                 await self.page.goto(search_url, timeout=20000)
-                await self._random_delay(2, 4)
+                    await self._random_delay(2, 4)
                 
                 # Check for empty HTML response that indicates end of results
                 body_element = await self.page.query_selector('body')
@@ -735,7 +735,7 @@ class LinkedInScraperGuest:
         
         if not all_job_ids:
             self.logger.info("No job IDs found, returning empty list")
-            return []
+        return []
             
         # Get job details for all collected IDs
         results = await self._get_job_details_with_llm_filtering(
