@@ -3,7 +3,7 @@ LangChain tool for creating new job searches.
 """
 import logging
 from typing import Type, Optional, List, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from langchain.tools import BaseTool
 from langchain.callbacks.manager import CallbackManagerForToolRun
 
@@ -23,11 +23,42 @@ class CreateJobSearchInput(BaseModel):
     user_id: int = Field(description="Telegram user ID creating the search")
     job_title: str = Field(description="Job title or keywords to search for (e.g., 'Python developer', 'Data scientist')")
     location: str = Field(description="Location to search in (e.g., 'Berlin', 'Remote', 'New York'). Required - specify city, country, or 'Remote'.")
-    job_types: Optional[List[str]] = Field(default=None, description="List of job types: 'full_time', 'part_time', 'contract', 'temporary', 'internship'. Leave empty for all types.")
-    remote_types: Optional[List[str]] = Field(default=None, description="Remote work preferences: 'remote', 'hybrid', 'on_site'. Leave empty for all types.")
-    time_period: Optional[str] = Field(default=None, description="How frequently to check for new jobs. Default is '1 hour' if not specified.")
-    filter_text: Optional[str] = Field(default=None, description="Additional filter keywords that must be present in job descriptions")
-    blacklist: Optional[List[str]] = Field(default=None, description="List of words/companies to exclude from results")
+    job_types: Optional[List[str]] = Field(default=None, description=f"List of job types. Valid options: {', '.join(get_job_types())}. Leave empty for all types.")
+    remote_types: Optional[List[str]] = Field(default=None, description=f"Remote work preferences. Valid options: {', '.join(get_remote_types())}. Leave empty for all types.")
+    time_period: Optional[str] = Field(default=None, description=f"How frequently to check for new jobs. Valid options: {', '.join(get_time_periods())}. Default is '{get_default_time_period()}' if not specified.")
+    filter_text: Optional[str] = Field(default=None, description="🌟 Our unique AI-powered smart filter! Use natural language to describe what you want to EXCLUDE from results")
+
+    @field_validator('job_types')
+    @classmethod
+    def validate_job_types(cls, v):
+        if v is None:
+            return v
+        valid_types = get_job_types()
+        invalid_types = [jt for jt in v if jt not in valid_types]
+        if invalid_types:
+            raise ValueError(f"Invalid job types: {', '.join(invalid_types)}. Valid options are: {', '.join(valid_types)}")
+        return v
+    
+    @field_validator('remote_types')
+    @classmethod
+    def validate_remote_types(cls, v):
+        if v is None:
+            return v
+        valid_types = get_remote_types()
+        invalid_types = [rt for rt in v if rt not in valid_types]
+        if invalid_types:
+            raise ValueError(f"Invalid remote types: {', '.join(invalid_types)}. Valid options are: {', '.join(valid_types)}")
+        return v
+    
+    @field_validator('time_period')
+    @classmethod
+    def validate_time_period(cls, v):
+        if v is None:
+            return v
+        valid_periods = get_time_periods()
+        if v not in valid_periods:
+            raise ValueError(f"Invalid time period: '{v}'. Valid options are: {', '.join(valid_periods)}")
+        return v
 
 
 class CreateJobSearchTool(BaseTool, DocumentedTool):
@@ -53,8 +84,7 @@ class CreateJobSearchTool(BaseTool, DocumentedTool):
     - job_types: Type of employment - options: {', '.join(get_job_types())}
     - remote_types: Remote work preference - options: {', '.join(get_remote_types())}
     - time_period: How frequently to check for new jobs - options: {', '.join(get_time_periods())}
-    - filter_text: Additional keywords that must be in the job description
-    - blacklist: Companies or keywords to exclude
+    - filter_text: 🌟 Our unique AI-powered smart filter! Use natural language to describe what you want to EXCLUDE from results
     
     Before calling this tool, make sure you have collected at least the job_title from the user.
     If any required information is missing, ask the user for it first.
@@ -99,8 +129,8 @@ class CreateJobSearchTool(BaseTool, DocumentedTool):
                     type=InputType.MULTISELECT,
                     required=False,
                     options=get_job_types(),
-                    example="Full-time",
-                    validation_rules=f"Leave empty to include all types: {', '.join(get_job_types())}"
+                    example=get_default_job_type(),
+                    validation_rules=f"Must choose from: {', '.join(get_job_types())}. Leave empty to include all types."
                 ),
                 ParameterInfo(
                     name="remote_types",
@@ -109,7 +139,7 @@ class CreateJobSearchTool(BaseTool, DocumentedTool):
                     required=False,
                     options=get_remote_types(),
                     example="Remote",
-                    validation_rules=f"Leave empty to include all arrangements: {', '.join(get_remote_types())}"
+                    validation_rules=f"Must choose from: {', '.join(get_remote_types())}. Leave empty to include all arrangements."
                 ),
                 ParameterInfo(
                     name="time_period",
@@ -117,31 +147,23 @@ class CreateJobSearchTool(BaseTool, DocumentedTool):
                     type=InputType.SELECT,
                     required=False,
                     options=get_time_periods(),
-                    example="1 hour",
-                    validation_rules="Determines how often the system checks for new jobs matching your criteria. Defaults to '1 hour' if not specified"
+                    example=get_default_time_period(),
+                    validation_rules=f"Must choose from: {', '.join(get_time_periods())}. Defaults to '{get_default_time_period()}' if not specified."
                 ),
                 ParameterInfo(
                     name="filter_text",
-                    description="Additional keywords for filtering job descriptions before they reach you",
+                    description="🌟 Our unique AI-powered smart filter! Use natural language to describe what you want to EXCLUDE from results",
                     type=InputType.TEXT,
                     required=False,
-                    example="No entry level, No Spanish required, No SAP experience",
-                    validation_rules="Use negative filters to exclude unwanted jobs. Examples: 'No entry level', 'No travel required', 'No security clearance'"
-                ),
-                ParameterInfo(
-                    name="blacklist",
-                    description="Companies or specific terms to exclude from search results",
-                    type=InputType.TEXT,
-                    required=False,
-                    example="TechCorp, startup",
-                    validation_rules="Comma-separated list of companies or terms to avoid"
+                    example="No entry level positions, no travel required, no security clearance needed, exclude startups",
+                    validation_rules="This is our signature feature - use natural language to describe what you DON'T want. The AI understands context and filters accordingly. Examples: 'No entry level', 'Avoid companies with less than 100 employees', 'No weekend work'"
                 )
             ],
             examples=[
                 "Create a search for Python developer jobs in Berlin with full-time contracts",
                 "I want to set up alerts for remote data scientist positions - check every hour",
-                "Create a search for React developer jobs in London - hybrid or remote preferred",
-                "Set up alerts for marketing manager roles - part-time or contract work"
+                "Create a search for React developer jobs in London - hybrid or remote preferred, filter out entry level positions",
+                "Set up alerts for marketing manager roles - part-time or contract work, exclude travel requirements"
             ],
             confirmation_required=True
         )
@@ -155,14 +177,21 @@ class CreateJobSearchTool(BaseTool, DocumentedTool):
         if not job_types:
             return [JobType.parse(get_default_job_type())]  # Default to full-time
         
+        valid_types = get_job_types()
         parsed_types = []
+        invalid_types = []
+        
         for jt in job_types:
-            try:
-                # Try to parse directly using the JobType.parse method
-                parsed_types.append(JobType.parse(jt))
-            except ValueError:
-                logger.warning(f"Invalid job type: {jt}")
-                continue
+            if jt not in valid_types:
+                invalid_types.append(jt)
+            else:
+                try:
+                    parsed_types.append(JobType.parse(jt))
+                except ValueError:
+                    invalid_types.append(jt)
+        
+        if invalid_types:
+            raise ValueError(f"Invalid job types: {', '.join(invalid_types)}. Valid options are: {', '.join(valid_types)}")
         
         return parsed_types if parsed_types else [JobType.parse(get_default_job_type())]
     
@@ -172,14 +201,21 @@ class CreateJobSearchTool(BaseTool, DocumentedTool):
             # Default to all available remote types
             return [RemoteType.parse(rt) for rt in get_all_remote_types()]
         
+        valid_types = get_remote_types()
         parsed_types = []
+        invalid_types = []
+        
         for rt in remote_types:
-            try:
-                # Try to parse directly using the RemoteType.parse method
-                parsed_types.append(RemoteType.parse(rt))
-            except ValueError:
-                logger.warning(f"Invalid remote type: {rt}")
-                continue
+            if rt not in valid_types:
+                invalid_types.append(rt)
+            else:
+                try:
+                    parsed_types.append(RemoteType.parse(rt))
+                except ValueError:
+                    invalid_types.append(rt)
+        
+        if invalid_types:
+            raise ValueError(f"Invalid remote types: {', '.join(invalid_types)}. Valid options are: {', '.join(valid_types)}")
         
         return parsed_types if parsed_types else [RemoteType.parse(rt) for rt in get_all_remote_types()]
     
@@ -188,12 +224,14 @@ class CreateJobSearchTool(BaseTool, DocumentedTool):
         if not time_period:
             return TimePeriod.parse(get_default_time_period())  # Default to 1 hour
         
+        valid_periods = get_time_periods()
+        if time_period not in valid_periods:
+            raise ValueError(f"Invalid time period: '{time_period}'. Valid options are: {', '.join(valid_periods)}")
+        
         try:
-            # Try to parse directly using the TimePeriod.parse method
             return TimePeriod.parse(time_period)
         except ValueError:
-            logger.warning(f"Invalid time period: {time_period}, defaulting to {get_default_time_period()}")
-            return TimePeriod.parse(get_default_time_period())
+            raise ValueError(f"Invalid time period: '{time_period}'. Valid options are: {', '.join(valid_periods)}")
     
     async def _arun(
         self,
@@ -204,7 +242,6 @@ class CreateJobSearchTool(BaseTool, DocumentedTool):
         remote_types: Optional[List[str]] = None,
         time_period: Optional[str] = None,
         filter_text: Optional[str] = None,
-        blacklist: Optional[List[str]] = None,
         run_manager: Optional[CallbackManagerForToolRun] = None
     ) -> str:
         """Async implementation of the tool."""
@@ -212,9 +249,23 @@ class CreateJobSearchTool(BaseTool, DocumentedTool):
             logger.info(f"Creating job search for user {user_id}: {job_title}")
             
             # Parse and validate inputs
-            parsed_job_types = self._parse_job_types(job_types)
-            parsed_remote_types = self._parse_remote_types(remote_types)
-            parsed_time_period = self._parse_time_period(time_period)
+            try:
+                parsed_job_types = self._parse_job_types(job_types)
+                parsed_remote_types = self._parse_remote_types(remote_types)
+                parsed_time_period = self._parse_time_period(time_period)
+            except ValueError as e:
+                # Return validation error with helpful information
+                error_msg = str(e)
+                return f"""❌ **Invalid Input**
+
+{error_msg}
+
+**Please specify valid values:**
+• **Job Types:** {', '.join(get_job_types())}
+• **Remote Types:** {', '.join(get_remote_types())}
+• **Time Periods:** {', '.join(get_time_periods())}
+
+❓ Would you like to try again with the correct values?"""
             
             # Create JobSearchIn object
             job_search_in = JobSearchIn(
@@ -225,42 +276,38 @@ class CreateJobSearchTool(BaseTool, DocumentedTool):
                 time_period=parsed_time_period,
                 user_id=user_id,
                 filter_text=filter_text,
-                blacklist=blacklist or []
             )
             
-            # Create the search
+            # Add search via manager
             search_id = await self.job_search_manager.add_search(job_search_in)
             
-            # Format success response
+            # Format successful response
             job_types_str = ", ".join([jt.label for jt in parsed_job_types])
             remote_types_str = ", ".join([rt.label for rt in parsed_remote_types])
             
             result = f"""✅ **Job Search Created Successfully!**
 
-🆔 **Search ID:** `{search_id}`
-🔍 **Keywords:** {job_title}
+**Search Details:**
+🔍 **Job:** {job_title}
 📍 **Location:** {location}
-💼 **Job Types:** {job_types_str}
-🏠 **Remote Options:** {remote_types_str}
-📅 **Search Frequency:** {parsed_time_period.display_name}
+💼 **Types:** {job_types_str}
+🏠 **Remote:** {remote_types_str}
+⏰ **Frequency:** Every {parsed_time_period.display_name.lower()}
 """
             
             if filter_text:
                 result += f"🔍 **Additional Filters:** {filter_text}\n"
             
-            if blacklist:
-                result += f"🚫 **Excluded Terms:** {', '.join(blacklist)}\n"
-            
             result += f"""
 **What happens next:**
-- I'll automatically check for new jobs matching your criteria every {parsed_time_period.display_name.lower()}
-- You'll receive notifications when new matching jobs are found
-- The search will find jobs posted recently based on your search frequency
+✅ I'll automatically check for new jobs every {parsed_time_period.display_name.lower()}
+✅ You'll receive notifications when relevant positions are found
+✅ Only jobs matching your criteria will be sent to you
 
 **Manage your search:**
-- View all searches: "Show my job searches"
-- Delete this search: "Delete search {search_id}"
-- Get details: "Show details for search {search_id}"
+• View details: "Show my job searches"
+• Modify: "Update my {job_title} search"
+• Delete: "Delete my {job_title} search"
 """
             
             logger.info(f"Successfully created job search {search_id} for user {user_id}")
@@ -268,74 +315,18 @@ class CreateJobSearchTool(BaseTool, DocumentedTool):
             
         except Exception as e:
             logger.error(f"Error creating job search for user {user_id}: {e}")
-            
-            # Generate contextual error response
-            error_str = str(e).lower()
-            
-            if "duplicate" in error_str or "already exists" in error_str:
-                return f"""❌ **Duplicate Job Search**
+            return f"""❌ **Failed to Create Job Search**
 
-It looks like you already have a similar job search set up.
+Sorry, I couldn't create your job search due to a technical issue.
 
-**What you can do:**
-• Use "Show my job searches" to see your existing alerts
-• Try modifying the job title or location to make it unique
-• Delete an existing similar search first if you want to replace it
-
-**Your request:** {job_title} in {location}"""
-            
-            elif "invalid" in error_str or "validation" in error_str:
-                return f"""❌ **Invalid Information**
-
-There's an issue with the job search details you provided.
-
-**Please check:**
-• **Job Title:** "{job_title}" - Make sure this describes a real job role
-• **Location:** "{location}" - Use a specific city/country or "Remote"
-• **Job Types:** {job_types if job_types else "All types"} - Use valid employment types
-• **Remote Options:** {remote_types if remote_types else "All arrangements"} - Use valid remote preferences
-
-Try rephrasing your request with clearer information."""
-            
-            elif "permission" in error_str or "auth" in error_str:
-                return """❌ **Permission Error**
-
-I don't have permission to create job searches for you right now.
-
-**What you can do:**
-• Try again in a moment
-• Contact support if this continues
-• Use /start to reinitialize our conversation"""
-            
-            elif "database" in error_str or "connection" in error_str:
-                return """❌ **Service Temporarily Unavailable**
-
-I'm having trouble saving your job search right now.
+**Error:** {str(e)}
 
 **What you can do:**
 • Try again in a few moments
-• The service may be temporarily busy
-• Your request will be processed as soon as the connection is restored
+• Simplify your search parameters
+• Contact support if the problem persists
 
-I'll remember your conversation when you try again!"""
-            
-            else:
-                return f"""❌ **Job Search Creation Failed**
-
-I encountered an unexpected issue while creating your job search.
-
-**Your details:**
-• **Job Title:** {job_title}
-• **Location:** {location}
-• **Types:** {job_types if job_types else "All types"}
-
-**What you can do:**
-• Try rephrasing your request
-• Use simpler terms for the job title
-• Try creating the search again in a moment
-• Use /help to see examples of successful requests
-
-I'm here to help when you're ready to try again! 🤖"""
+❓ Would you like to try creating the search again?"""
     
     def _run(
         self,
@@ -346,7 +337,6 @@ I'm here to help when you're ready to try again! 🤖"""
         remote_types: Optional[List[str]] = None,
         time_period: Optional[str] = None,
         filter_text: Optional[str] = None,
-        blacklist: Optional[List[str]] = None,
         run_manager: Optional[CallbackManagerForToolRun] = None
     ) -> str:
         """Sync implementation (not used in async context)."""

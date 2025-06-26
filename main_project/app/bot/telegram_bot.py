@@ -160,57 +160,58 @@ Say "help with [topic]" for specific guidance:
             user_message = update.message.text
             user_id = update.effective_user.id
             
-            # Show typing indicator
+            # IMMEDIATE RESPONSE: Send instant acknowledgment
             await update.message.reply_chat_action("typing")
+            progress_message = await update.message.reply_text("💭 Got it! Processing...")
             
-            # Check for specific help requests first
+            # FAST PATH: Check for simple, direct operations that don't need LLM
+            fast_response = await self._try_fast_path(user_message, user_id)
+            if fast_response:
+                await progress_message.edit_text("✅ Ready!")
+                await self._send_message_with_splitting(user_id, fast_response)
+                return
+            
+            # Check for specific help requests first (quick path)
             if self._is_help_request(user_message):
                 tool_name = self._extract_tool_name_from_help(user_message)
                 if tool_name and hasattr(self.llm_agent, 'tool_registry') and self.llm_agent.tool_registry:
-                    progress_message = await update.message.reply_text("📚 Gathering help information...")
+                    await progress_message.edit_text("📚 Getting help information...")
                     help_response = self.llm_agent.get_tool_help(tool_name)
-                    await progress_message.edit_text("📚 Help information ready!")
+                    await progress_message.edit_text("✅ Ready!")
                     await self._send_message_with_splitting(user_id, help_response)
                     return
             
             # Initialize LLM agent if not already done
             if not hasattr(self.llm_agent, 'agent_executor') or self.llm_agent.agent_executor is None:
-                initialization_msg = await update.message.reply_text("🤖 Initializing AI assistant... Please wait a moment.")
+                await progress_message.edit_text("🤖 Initializing AI assistant...")
                 try:
                     await self.llm_agent.initialize()
-                    await initialization_msg.edit_text("✅ AI assistant ready!")
+                    await progress_message.edit_text("✅ AI ready! Thinking...")
                 except Exception as init_error:
-                    await initialization_msg.edit_text("❌ Failed to initialize AI assistant.")
+                    await progress_message.edit_text("❌ Failed to initialize AI assistant.")
                     raise init_error
             
-            # Send processing indicator
-            progress_message = await update.message.reply_text("🤔 Processing your request...")
+            # Update progress and start processing
+            await progress_message.edit_text("🧠 Thinking...")
             
-            # Show typing periodically during processing
-            async def show_typing_periodically():
-                import asyncio
-                for _ in range(3):  # Show typing 3 times during processing
-                    await update.message.reply_chat_action("typing")
-                    await asyncio.sleep(2)
-            
-            # Start typing task
-            typing_task = asyncio.create_task(show_typing_periodically())
+            # Start periodic status updates
+            status_task = asyncio.create_task(self._show_processing_status(progress_message))
             
             try:
                 # Process with LLM agent
                 response = await self.llm_agent.chat(user_id, user_message)
                 
-                # Cancel typing task
-                typing_task.cancel()
+                # Cancel status updates
+                status_task.cancel()
                 
-                # Update progress message
+                # Quick final update
                 await progress_message.edit_text("✅ Response ready!")
                 
-                # Send response
+                # Send response immediately
                 await self._send_message_with_splitting(user_id, response)
                 
             except Exception as processing_error:
-                typing_task.cancel()
+                status_task.cancel()
                 await progress_message.edit_text("❌ Error processing request.")
                 raise processing_error
             
@@ -224,6 +225,87 @@ Say "help with [topic]" for specific guidance:
                     await update.message.reply_text(error_response)
             else:
                 await update.message.reply_text(error_response)
+
+    async def _try_fast_path(self, message: str, user_id: int) -> Optional[str]:
+        """Try to handle simple requests without LLM processing for speed.
+        
+        Returns:
+            str: Fast response if handled, None if LLM processing needed
+        """
+        message_lower = message.lower().strip()
+        
+        # Simple greetings
+        if message_lower in ['hi', 'hello', 'hey', 'start']:
+            return ("👋 Hello! I'm your AI job search assistant.\n\n"
+                   "I can help you:\n"
+                   "• List your job searches\n" 
+                   "• Create new searches\n"
+                   "• Delete old searches\n"
+                   "• Find jobs immediately\n\n"
+                   "Just tell me what you'd like to do!")
+        
+        # Status/list requests
+        if any(phrase in message_lower for phrase in ['show my searches', 'list searches', 'my searches', 'show searches']):
+            try:
+                searches = await self.job_search_manager.get_user_searches(user_id)
+                if not searches:
+                    return ("📋 **Your Job Searches**\n\n"
+                           "You don't have any active job searches yet.\n\n"
+                           "Would you like to create your first search? Just tell me what job you're looking for!")
+                
+                # Format searches quickly
+                search_list = ["📋 **Your Active Job Searches:**\n"]
+                for i, search in enumerate(searches, 1):
+                    search_list.append(f"{i}. 🔍 {search.job_title} in {search.location}")
+                
+                search_list.append(f"\n💬 Total: {len(searches)} active searches")
+                search_list.append("\nTo get details about a specific search, just ask: \"Show details for [job title]\"")
+                
+                return "\n".join(search_list)
+            except Exception as e:
+                logger.error(f"Error in fast path list: {e}")
+                return None
+        
+        # Quick help
+        if message_lower in ['help', '?', 'what can you do']:
+            return ("🤖 **I'm your AI Job Search Assistant!**\n\n"
+                   "**What I can do:**\n"
+                   "• 📋 List your job searches\n"
+                   "• ➕ Create new job search alerts\n" 
+                   "• 🗑️ Delete unwanted searches\n"
+                   "• 📊 Show details about specific searches\n"
+                   "• 🔍 Find jobs immediately (one-time search)\n\n"
+                   "**Just talk to me naturally!**\n"
+                   "Examples:\n"
+                   "• \"Show my searches\"\n"
+                   "• \"Create a search for Python jobs in Berlin\"\n"
+                   "• \"Find React developer jobs right now\"\n"
+                   "• \"Delete my old marketing search\"\n\n"
+                   "What would you like to do?")
+        
+        # Not a fast path case
+        return None
+
+    async def _show_processing_status(self, message: Message):
+        """Show rotating processing status to keep user engaged."""
+        statuses = [
+            "🧠 Thinking...",
+            "🔍 Analyzing your request...",
+            "⚡ Processing...",
+            "🤔 Working on it...",
+            "🎯 Almost ready..."
+        ]
+        
+        try:
+            for i in range(30):  # Show status for up to 30 seconds
+                status = statuses[i % len(statuses)]
+                await message.edit_text(status)
+                await asyncio.sleep(2)
+        except asyncio.CancelledError:
+            # Normal cancellation when processing is done
+            pass
+        except Exception as e:
+            logger.warning(f"Error updating status: {e}")
 
     async def handle_unknown_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle unknown commands by redirecting to LLM agent."""
@@ -660,7 +742,7 @@ Use /help for more detailed assistance."""
             
             # Minimal fallback examples
             return """**For example:**
-- "Show me my job searches"
+- "Show me my searches"
 - "Create a new search for Python jobs"
 - "Find jobs for me now\""""
             

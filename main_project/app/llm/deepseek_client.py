@@ -1,5 +1,5 @@
 """
-DeepSeek LLM client wrapper using LangChain.
+DeepSeek LLM client wrapper using LangChain - Optimized for speed.
 """
 import logging
 from typing import Optional, Dict, Any, List
@@ -30,34 +30,44 @@ class DeepSeekCallbackHandler(BaseCallbackHandler):
 
 
 class ChatDeepSeekClient:
-    """Wrapper for DeepSeek LLM using LangChain ChatOpenAI interface."""
+    """Wrapper for DeepSeek LLM using LangChain ChatOpenAI interface - Optimized for speed."""
     
-    def __init__(self, api_key: Optional[str] = None, temperature: float = 0.7, max_tokens: Optional[int] = None):
-        """Initialize the DeepSeek client.
+    def __init__(self, api_key: Optional[str] = None, temperature: float = 0.3, max_tokens: Optional[int] = 900):
+        """Initialize the DeepSeek client with speed optimizations.
         
         Args:
             api_key: DeepSeek API key (defaults to config value)
-            temperature: Sampling temperature (0.0 to 1.0)
+            temperature: Sampling temperature (0.0 to 1.0) - Lower for faster responses
             max_tokens: Maximum tokens in response
         """
         self.api_key = api_key or config.deepseek_api_key
         if not self.api_key:
             raise ValueError("DeepSeek API key is required. Set DEEPSEEK_API_KEY environment variable.")
         
-        self.temperature = temperature
-        self.max_tokens = max_tokens
+        # Speed optimizations
+        self.temperature = temperature  # Lower temperature = faster responses
+        self.max_tokens = max_tokens  # Limit response length for speed
         
-        # Initialize ChatOpenAI with DeepSeek endpoint
+        # Create persistent HTTP client for connection reuse (synchronous for LangChain)
+        self.http_client = httpx.Client(
+            timeout=httpx.Timeout(30.0),  # 30s timeout
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5)
+        )
+        
+        # Initialize ChatOpenAI with DeepSeek endpoint and speed optimizations
         self.llm = ChatOpenAI(
             model="deepseek-chat",
             openai_api_key=self.api_key,
             openai_api_base="https://api.deepseek.com/v1",
             temperature=self.temperature,
             max_tokens=self.max_tokens,
-            callbacks=[DeepSeekCallbackHandler()]
+            request_timeout=30,  # 30s timeout for requests
+            max_retries=1,  # Reduce retries for faster failure
+            callbacks=[DeepSeekCallbackHandler()],
+            http_client=self.http_client  # Reuse HTTP connections
         )
         
-        logger.info(f"Initialized ChatDeepSeek client with temperature={temperature}")
+        logger.info(f"Initialized optimized ChatDeepSeek client with temperature={temperature}, max_tokens={self.max_tokens}")
     
     async def chat_completion(self, messages: List[Dict[str, str]]) -> str:
         """Send a chat completion request to DeepSeek.
@@ -143,6 +153,11 @@ class ChatDeepSeekClient:
             "has_api_key": bool(self.api_key)
         }
 
+    def close(self):
+        """Close the HTTP client to free resources."""
+        if self.http_client:
+            self.http_client.close()
+
 
 # Global instance for easy access
 _deepseek_client: Optional[ChatDeepSeekClient] = None
@@ -158,7 +173,6 @@ def get_deepseek_client() -> ChatDeepSeekClient:
     if _deepseek_client is None:
         _deepseek_client = ChatDeepSeekClient()
     return _deepseek_client
-
 
 async def test_deepseek_connection() -> bool:
     """Test the DeepSeek API connection.

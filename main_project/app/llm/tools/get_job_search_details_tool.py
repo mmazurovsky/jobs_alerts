@@ -100,9 +100,9 @@ class GetJobSearchDetailsTool(BaseTool, DocumentedTool):
             if not target_search:
                 return f"""❌ **Search not found**
 
-I couldn't find a job search with ID `{search_id}` in your account.
+I couldn't find that job search in your account.
 
-Please check the search ID and try again. You can use "Show my job searches" to see all your active searches and their IDs."""
+Please check the search description and try again. You can use "Show my job searches" to see all your active searches."""
             
             # Format detailed information
             job_types = [jt.label if hasattr(jt, 'label') else str(jt) for jt in target_search.job_types] if target_search.job_types else ["Any"]
@@ -113,44 +113,40 @@ Please check the search ID and try again. You can use "Show my job searches" to 
             
             result = f"""📋 **Job Search Details**
 
-🆔 **Search ID:** `{target_search.id}`
 🔍 **Keywords:** {target_search.job_title}
 📍 **Location:** {target_search.location or "Any location"}
 💼 **Job Types:** {job_types_str}
 🏠 **Remote Options:** {remote_types_str}
 📅 **Time Period:** {target_search.time_period.label if hasattr(target_search.time_period, 'label') else str(target_search.time_period)}
-👤 **User ID:** {target_search.user_id}
 """
             
-            # Add optional fields if present
+            # Add filter text if present
             if hasattr(target_search, 'filter_text') and target_search.filter_text:
-                result += f"🔍 **Additional Filters:** {target_search.filter_text}\n"
+                result += f"🔍 **Smart Filter:** {target_search.filter_text}\n"
             
-            if hasattr(target_search, 'blacklist') and target_search.blacklist:
-                result += f"🚫 **Excluded Terms:** {', '.join(target_search.blacklist)}\n"
+            result += f"📅 **Created:** {target_search.created_at.strftime('%Y-%m-%d %H:%M')}\n\n"
             
-            result += f"""
-**Search Status:** ✅ Active (checking for new jobs periodically)
+            result += """**What this search does:**
+✅ Automatically checks for new job postings every {period}
+✅ Filters results using LinkedIn's search parameters
+✅ Applies your smart filter to exclude unwanted positions
+✅ Sends you only relevant job opportunities
 
-**Available Actions:**
-- Update this search: "Update search {target_search.id}"
-- Delete this search: "Delete search {target_search.id}"
-- Run one-time search: "Search for {target_search.job_title} jobs now"
-- View all searches: "Show my job searches"
+**Available actions:**
+🗑️ Delete this search: Say "Delete job search {search_id}"
+📝 Modify search: Say "Update my job search for {title}"
+🔍 Run search now: Say "Search for {title} jobs in {location}"
 
-**Search Configuration Explained:**
-- **Keywords:** These are used to find relevant job titles and descriptions
-- **Location:** Geographic area for job search (leave empty for remote/any location)
-- **Job Types:** Employment types you're interested in
-- **Remote Options:** Your work location preferences
-- **Time Period:** How recent the jobs should be when checking
-"""
-            
-            if hasattr(target_search, 'filter_text') and target_search.filter_text:
-                result += f"- **Additional Filters:** Extra keywords that must appear in job descriptions\n"
-            
-            if hasattr(target_search, 'blacklist') and target_search.blacklist:
-                result += f"- **Excluded Terms:** Companies or keywords to avoid\n"
+**Need help?** 
+• To see all your searches: "List my job searches"
+• To create a new search: "Create a job search for [job title]"
+• To run a quick search: "Find [job title] jobs in [location]"
+""".format(
+                period=target_search.time_period.display_name.lower(),
+                search_id=search_id,
+                title=target_search.job_title,
+                location=target_search.location
+            )
             
             logger.info(f"Successfully retrieved details for job search {search_id}")
             return result

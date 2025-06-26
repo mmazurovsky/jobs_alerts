@@ -134,6 +134,11 @@ async def check_proxy_connection():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Proxy check failed: {str(e)}")
 
+@app.get("/health")
+async def health():
+    """Health check endpoint."""
+    return {"status": "healthy", "service": "linkedin_scraper_service"}
+
 @app.on_event("shutdown")
 async def shutdown_event():
     await LinkedInScraperGuest.close_all_browsers() 

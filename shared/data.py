@@ -207,7 +207,6 @@ class JobSearchIn(CustomBaseModel):
     remote_types: List[RemoteType]
     time_period: TimePeriod
     user_id: int  # Telegram user ID
-    blacklist: List[str] = []  # List of strings to blacklist from job titles
     filter_text: Optional[str] = None
 
     @field_validator('job_types', 'remote_types', 'time_period')
@@ -236,7 +235,6 @@ class JobSearchOut(CustomBaseModel):
     remote_types: List[RemoteType] = []
     time_period: TimePeriod
     user_id: int  # Telegram user ID
-    blacklist: List[str] = []  # List of strings to blacklist from job titles
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     filter_text: Optional[str] = None
 
@@ -312,6 +310,10 @@ def get_default_time_period() -> str:
 def get_all_job_types() -> List[str]:
     """Get all available job types (same as get_job_types for compatibility)."""
     return get_job_types()
+
+def get_default_remote_type() -> str:
+    """Get the default remote type for searches."""
+    return "Remote"
 
 def get_all_remote_types() -> List[str]:
     """Get all available remote types (same as get_remote_types for compatibility)."""

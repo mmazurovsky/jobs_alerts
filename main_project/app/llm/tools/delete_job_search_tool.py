@@ -105,9 +105,9 @@ class DeleteJobSearchTool(BaseTool, DocumentedTool):
             if not search_to_delete:
                 return f"""❌ **Search not found**
 
-I couldn't find a job search with ID `{search_id}` in your account.
+I couldn't find that job search in your account.
 
-Please check the search ID and try again. You can use "Show my job searches" to see all your active searches and their IDs."""
+Please check the search description and try again. You can use "Show my job searches" to see all your active searches."""
             
             # Create JobSearchRemove object
             job_search_remove = JobSearchRemove(
@@ -124,7 +124,6 @@ Please check the search ID and try again. You can use "Show my job searches" to 
 🗑️ **Deleted Search:**
 - **Keywords:** {search_to_delete.job_title}
 - **Location:** {search_to_delete.location or "Any location"}
-- **Search ID:** `{search_id}`
 
 **What this means:**
 - This search will no longer check for new jobs
@@ -139,7 +138,7 @@ Just say "Create a new job search" and I'll help you set it up!
             else:
                 return f"""❌ **Failed to delete search**
 
-I couldn't delete the job search with ID `{search_id}`. This could be due to:
+I couldn't delete that job search. This could be due to:
 - The search might have already been deleted
 - A temporary system issue
 

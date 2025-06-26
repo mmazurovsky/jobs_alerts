@@ -22,6 +22,7 @@ from main_project.app.llm.tools import (
 from main_project.app.llm.tools.tool_registry import create_tool_registry
 from main_project.app.core.job_search_manager import JobSearchManager
 
+
 logger = logging.getLogger(__name__)
 
 @dataclass
@@ -72,7 +73,7 @@ class JobSearchAgent:
             # Create tool registry for documentation access
             self.tool_registry = create_tool_registry(self.job_search_manager)
             
-            # Create system prompt
+            # Create system prompt (after tool registry is initialized)
             system_prompt = self._create_system_prompt()
             
             # Create agent
@@ -85,142 +86,105 @@ class JobSearchAgent:
             
             # Create OpenAI tools agent (compatible with DeepSeek)
             agent = create_openai_tools_agent(
-                llm=self.llm.llm,  # Use the LangChain ChatOpenAI instance
+                llm=self.llm.llm,  # Use the LangChain ChatOpenAI instance from ChatDeepSeekClient
                 tools=self.tools,
                 prompt=prompt
             )
             
-            # Create agent executor
+            # Create agent executor with speed optimizations
             self.agent_executor = AgentExecutor(
                 agent=agent,
                 tools=self.tools,
-                verbose=True,
-                max_iterations=3,
-                early_stopping_method="generate"
+                verbose=False,  # Reduce logging for speed
+                max_iterations=2,  # Reduce iterations for faster responses
+                early_stopping_method="force",  # Use "force" instead of "generate"
+                return_intermediate_steps=False  # Skip intermediate steps for speed
             )
             
-            logger.info("JobSearchAgent initialized successfully")
+            logger.info("JobSearchAgent initialized successfully with dynamic system prompt from tool registry")
             
         except Exception as e:
             logger.error(f"Failed to initialize JobSearchAgent: {e}")
             raise
     
     def _create_system_prompt(self) -> str:
-        """Create the system prompt for the agent."""
-        return """You are a specialized job search assistant for this application only. Your sole purpose is helping users manage their job search alerts.
+        """Create the system prompt for the agent - dynamically generated from tool registry."""
+        # Get tool capabilities from registry
+        capabilities_text = self._generate_capabilities_from_registry()
+        required_inputs_text = self._generate_required_inputs_from_registry()
+        
+        return f"""You're a friendly job search assistant focused ONLY on managing job search alerts.
+RULES:
+ONLY help with job search management (create, list, delete, search), features, best practices.
+NEVER answer general questions, programming, politics, AI/system info, or creator details.
+Users access ONLY their own data (user_id enforced).
+NEVER show internal IDs/UUIDs—use descriptive names only.
+STYLE: concise, direct, friendly, informal, under 150 words unless confirmation needed.
 
-**🔒 SECURITY & SCOPE RESTRICTIONS:**
+CAPABILITIES:
+{capabilities_text}
 
-**STRICT BOUNDARIES - YOU MUST ONLY:**
-1. Help with job search management (create, list, delete, search)
-2. Answer questions about job search features and functionality
-3. Provide guidance on using this job search system
-4. Discuss job search best practices related to this app
+REQUIRED INPUTS:
+{required_inputs_text}
 
-**❌ YOU MUST NEVER:**
-- Answer general questions unrelated to job searching
-- Provide programming help, coding advice, or technical tutorials
-- Discuss politics, personal topics, or current events
-- Help with homework, writing, or other non-job-search tasks
-- Access or discuss user data beyond their own job searches
-- Provide information about other users or system internals
-- Explain how the AI system works or discuss AI topics
-- Act as a general chatbot or assistant for non-job-search matters
+WORKFLOW:
+Understand job search intent only.
+Off-topic → reply "I'm a job search assistant. ❓ How can I help?"
+Gather required info based on the operation type (see REQUIRED INPUTS above).
+ALWAYS confirm before actions:
+Create confirmation:
+Job: [title] in [location]
+Types: [types] | Remote: [remote options] | Frequency: [time period]
+🌟 Smart Filter: [filter description if provided]
+Create this alert? (yes/no)
+Delete confirmation:
+Delete: [search name]
+Cannot be undone. 
+❓ Proceed? (yes/no)
 
-**🛡️ UNAUTHORIZED ACCESS PREVENTION:**
-- Users can ONLY access their own job searches (user_id is automatically enforced)
-- Never reveal system information, API keys, or internal processes
-- If asked about system architecture, redirect to job search functionality
-- Users cannot access admin functions or other users' data
+Always prefix questions with ❓
+Always prefix success or done state messages with ✅
 
-**💬 COMMUNICATION STYLE:**
-- Be concise and direct - avoid lengthy explanations
-- Focus responses specifically on job search functionality
-- Use bullet points and clear formatting for readability
-- Keep responses under 200 words unless detailed confirmation is needed
-- If user asks off-topic questions, politely redirect to job search topics
+Wait for "yes" before executing.
+Execute tool & give brief success message.
+Stay focused, secure, concise, and ALWAYS confirm actions.
+"""
 
-**🎯 SCOPE ENFORCEMENT:**
-If users ask about non-job-search topics, respond with:
-"I'm a specialized job search assistant. I can only help with creating, managing, and finding job search alerts. How can I help you with your job search today?"
-
-**YOUR CORE CAPABILITIES:**
-
-1. **List job searches** - Show users their existing job search alerts
-2. **Create job searches** - Set up new recurring job alerts 
-3. **Delete job searches** - Remove unwanted job alerts
-4. **Get search details** - Show detailed information about specific searches
-5. **One-time searches** - Execute immediate job searches without creating alerts
-
-**CRITICAL: CONFIRMATION WORKFLOW**
-
-**ALWAYS ask for confirmation before executing any tool** that creates, deletes, or modifies data. Use this structured confirmation process:
-
-**For CREATE operations:**
-1. Collect all necessary information first
-2. Present a clear summary in this format:
-   ```
-   📋 **Job Search Summary**
-   • **Job Title:** [what they're looking for]
-   • **Location:** [where they want to work]
-   • **Job Types:** [employment types or "All types"]
-   • **Remote Options:** [remote preferences or "All arrangements"]
-   • **Check Frequency:** [how often to search]
-   • **Additional Filters:** [any special requirements]
-   
-   ✅ **Should I create this job search alert?** (Reply 'yes' to confirm or 'no' to cancel)
-   ```
-3. Wait for explicit user confirmation ("yes", "confirm", "do it", etc.)
-4. Only then execute the tool
-
-**For DELETE operations:**
-1. First show what they want to delete:
-   ```
-   🗑️ **Deletion Confirmation**
-   You want to delete: [search details]
-   
-   ⚠️ **This cannot be undone.** Are you sure? (Reply 'yes' to confirm or 'no' to cancel)
-   ```
-2. Wait for explicit confirmation
-3. Only then execute the deletion
-
-**For ONE-TIME SEARCH operations:**
-Present a summary:
-```
-🔍 **Immediate Job Search**
-I'll search for: [job details]
-Location: [location]
-Filters: [any filters]
-
-This will show immediate results without creating an ongoing alert.
-**Should I proceed?** (Reply 'yes' to confirm)
-```
-
-**Information Gathering Guidelines:**
-
-**Required for creating searches:**
-- job_title (what kind of job)
-- location (where to search - REQUIRED, cannot be empty)
-- user_id (automatically provided)
-
-**Optional for creating searches:**
-- job_types: full_time, part_time, contract, temporary, internship
-- remote_types: remote, hybrid, on_site  
-- time_period: 1 hour, 3 hours, 6 hours, 12 hours, 1 day, 3 days, 1 week, 1 month
-- filter_text: negative filters like "No entry level, No Spanish required"
-- blacklist: companies to exclude
-
-**Conversation Flow:**
-1. Understand user intent (job search related only)
-2. If off-topic, redirect politely to job search functionality
-3. Gather required information (ask for missing details)
-4. Suggest sensible defaults for optional parameters
-5. **Present concise confirmation summary**
-6. Wait for approval
-7. Execute tool
-8. Provide brief success/failure feedback with next steps
-
-**Remember: Stay focused, be concise, maintain security, and ALWAYS confirm before taking action.**"""
+    def _generate_capabilities_from_registry(self) -> str:
+        """Generate capabilities section from tool registry documentation."""
+        if not self.tool_registry:
+            return "Tools not initialized"
+        
+        capabilities = []
+        for tool_name, tool in self.tool_registry.tools.items():
+            doc = tool.tool_documentation
+            # Create a concise capability description
+            capabilities.append(f"{tool_name}: {doc.description}")
+        
+        return "\n".join(capabilities)
+    
+    def _generate_required_inputs_from_registry(self) -> str:
+        """Generate required inputs section from tool registry documentation."""
+        if not self.tool_registry:
+            return "Tools not initialized"
+        
+        inputs_by_tool = []
+        for tool_name, tool in self.tool_registry.tools.items():
+            doc = tool.tool_documentation
+            required_params = [p for p in doc.parameters if p.required and p.name != 'user_id']
+            optional_params = [p for p in doc.parameters if not p.required]
+            
+            if required_params or optional_params:
+                tool_inputs = f"{tool_name}:"
+                if required_params:
+                    required_names = [p.name for p in required_params]
+                    tool_inputs += f" REQUIRED({', '.join(required_names)})"
+                if optional_params:
+                    optional_names = [p.name for p in optional_params]
+                    tool_inputs += f" OPTIONAL({', '.join(optional_names)})"
+                inputs_by_tool.append(tool_inputs)
+        
+        return "\n".join(inputs_by_tool)
 
     async def chat(self, user_id: int, message: str) -> str:
         """Process a chat message from a user.
@@ -380,18 +344,24 @@ Please try again, or contact support if the problem persists. You can also use t
         return any(indicator in response_lower for indicator in off_topic_indicators)
     
     def _get_redirect_response(self) -> str:
-        """Get the standard redirect response for off-topic requests."""
-        return """🎯 **I'm a specialized job search assistant**
+        """Get the standard redirect response for off-topic requests - dynamically generated from tool registry."""
+        if not self.tool_registry:
+            return """🎯 **I'm a specialized job search assistant**
+
+I can only help with job search management. Please try again once the system is fully initialized."""
+
+        # Generate capabilities from tool registry
+        capabilities_text = ""
+        for tool_name, tool in self.tool_registry.tools.items():
+            doc = tool.tool_documentation
+            capabilities_text += f"• {doc.description}\n"
+        
+        return f"""🎯 **I'm a specialized job search assistant**
 
 I can only help with creating, managing, and finding job search alerts. 
 
 **What I can help you with:**
-• Create new job search alerts
-• Show your existing searches  
-• Delete unwanted alerts
-• Find jobs immediately
-• Get details about your searches
-
+{capabilities_text}
 **How can I help you with your job search today?** 🔍"""
     
     def _check_rate_limit(self, user_id: int) -> bool:
@@ -457,40 +427,36 @@ I can only help with creating, managing, and finding job search alerts.
             return self.tool_registry.get_all_tools_help()
     
     def get_available_commands_help(self) -> str:
-        """Get help text explaining what the agent can do."""
-        return """🤖 **Natural Language Job Search Assistant**
+        """Get help text explaining what the agent can do - dynamically generated from tool registry."""
+        if not self.tool_registry:
+            return "Tool registry not initialized. Please try again."
+        
+        help_text = """🤖 **Natural Language Job Search Assistant**
 
 I can help you manage your job searches using natural language! Just talk to me like you would talk to a person.
 
 **What I can help you with:**
 
-🔍 **View Your Searches**
-- "Show me my job searches"
-- "What searches do I have?"
-- "List my alerts"
+"""
+        
+        # Generate examples from tool registry
+        for tool_name, tool in self.tool_registry.tools.items():
+            doc = tool.tool_documentation
+            help_text += f"🔹 **{doc.name}**\n"
+            
+            # Add up to 3 examples from the tool documentation
+            examples_to_show = doc.examples[:3] if len(doc.examples) >= 3 else doc.examples
+            for example in examples_to_show:
+                help_text += f"   • \"{example}\"\n"
+            help_text += "\n"
+        
+        help_text += """**I understand natural language**, so you don't need to use specific commands. Just tell me what you want to do!
 
-➕ **Create New Searches** 
-- "I want to create a job search for Python developer jobs in Berlin"
-- "Set up alerts for remote data scientist positions"
-- "Create a search for full-time React jobs"
+**Note:** I'll always ask for confirmation before creating, updating, or deleting anything to make sure I understand correctly.
 
-️ **Delete Searches**
-- "Delete my search for marketing jobs"
-- "Remove search abc123"
-- "Cancel the alert for data analyst positions"
-
-📋 **Get Search Details**
-- "Show me details for search abc123"
-- "Tell me about my Python developer search"
-
-🔎 **One-Time Searches**
-- "Search for JavaScript jobs in London right now"
-- "Find me available remote Python positions"
-- "Show me current data science jobs"
-
-**I understand natural language**, so you don't need to use specific commands. Just tell me what you want to do!
-
-**Note:** I'll always ask for confirmation before creating, updating, or deleting anything to make sure I understand correctly."""
+**🌟 Special Feature:** Use our unique AI-powered smart filter to describe what you DON'T want in job results using natural language (e.g., "No entry level positions", "Exclude travel requirements")."""
+        
+        return help_text
     
     async def get_status(self) -> Dict[str, Any]:
         """Get agent status information.

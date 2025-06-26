@@ -56,7 +56,6 @@ class JobSearchManager:
                 remote_types=search_in.remote_types,
                 time_period=search_in.time_period,
                 user_id=search_in.user_id,
-                blacklist=search_in.blacklist,
                 filter_text=search_in.filter_text,
             )
             logger.info(f"Added new job search from user: {search.to_log_string()}")

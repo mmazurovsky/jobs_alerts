@@ -108,28 +108,24 @@ Just say something like "I want to create a new job search" and I'll help you ge
                 remote_types_str = ", ".join(remote_types)
                 
                 result += f"""**{i}. {search.job_title}**
-🆔 ID: `{search.id}`
 📍 Location: {search.location or "Any location"}
 💼 Job Types: {job_types_str}
 🏠 Remote: {remote_types_str}
 📅 Time Period: {search.time_period.label if hasattr(search.time_period, 'label') else str(search.time_period)}
 """
                 
-                # Add filter info if present
+                # Add filter text if present
                 if hasattr(search, 'filter_text') and search.filter_text:
-                    result += f"🔍 Filters: {search.filter_text}\n"
-                    
-                # Add blacklist if present
-                if hasattr(search, 'blacklist') and search.blacklist:
-                    result += f"🚫 Blacklist: {', '.join(search.blacklist)}\n"
+                    result += f"🔍 **Smart Filter:** {search.filter_text}\n"
                 
-                result += "\n"
+                # Add separator between searches
+                result += "\n" + "─" * 30 + "\n\n"
             
             result += """**Available Actions:**
-- To view details: "Show me details for search [ID]"
-- To delete a search: "Delete search [ID]" 
+- To view details: "Show me details for my [job title] search"
+- To delete a search: "Delete my [job title] search" 
 - To create a new search: "Create a new job search"
-- To update a search: "Update search [ID]" """
+- To update a search: "Update my [job title] search" """
             
             logger.info(f"Successfully listed {len(searches)} job searches for user {user_id}")
             return result

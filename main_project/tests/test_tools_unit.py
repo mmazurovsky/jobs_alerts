@@ -3,8 +3,9 @@ Comprehensive unit tests for LangChain tools functionality.
 """
 import pytest
 import asyncio
-from unittest.mock import Mock, AsyncMock
+from unittest.mock import Mock, AsyncMock, MagicMock
 from typing import List
+from datetime import datetime, timezone
 
 # Import the tools
 from main_project.app.llm.tools import (
@@ -16,6 +17,7 @@ from main_project.app.llm.tools import (
 )
 from main_project.app.llm.tools.tool_registry import create_tool_registry
 from main_project.app.core.job_search_manager import JobSearchManager
+from shared.data import JobType, RemoteType, TimePeriod
 
 
 class TestToolRegistry:
@@ -70,7 +72,6 @@ class TestListJobSearchesTool:
                 self.remote_types = remote_types
                 self.time_period = time_period
                 self.filter_text = None
-                self.blacklist = []
         
         mock_searches = [
             MockJobSearch(
@@ -136,8 +137,8 @@ class TestCreateJobSearchTool:
             user_id=12345,
             job_title="Python Developer",
             location="Berlin",
-            job_types=["full_time"],
-            remote_types=["hybrid"],
+            job_types=["Full-time"],
+            remote_types=["Hybrid"],
             time_period="1 hour"
         )
         
@@ -148,10 +149,12 @@ class TestCreateJobSearchTool:
         assert call_args.location == "Berlin"
         assert call_args.user_id == 12345
         
-        # Verify response
+        # Verify response (should not contain the search ID for security)
         assert "✅" in result
-        assert "search123" in result
         assert "Python Developer" in result
+        assert "Berlin" in result
+        # Ensure no ID is exposed in the response
+        assert "search123" not in result
     
     def test_job_type_parsing(self, tool):
         """Test job type parsing functionality."""

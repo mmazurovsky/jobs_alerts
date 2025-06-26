@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import sys
+import pytest
 from pathlib import Path
 
 # Add the project root to Python path
@@ -25,25 +26,28 @@ logger = logging.getLogger(__name__)
 
 
 def load_test_environment():
-    """Load test environment variables."""
-    # Try to load .env.test first, then fall back to .env
+    """Load test environment variables from .env.test file."""
+    # Load .env.test first (preferred for tests), then fall back to .env
     test_env_path = project_root / "main_project" / ".env.test"
     env_path = project_root / "main_project" / ".env"
     
     if test_env_path.exists():
         logger.info(f"Loading test environment from {test_env_path}")
         load_dotenv(test_env_path)
+        return True
     elif env_path.exists():
-        logger.info(f"Loading environment from {env_path}")
+        logger.warning(f"No .env.test found, falling back to {env_path}")
         load_dotenv(env_path)
+        return True
     else:
-        logger.warning("No .env or .env.test file found, using system environment variables")
+        logger.error("No .env.test or .env file found!")
+        return False
 
 
 class TestChatDeepSeekClient:
     """Test version of ChatDeepSeek client to avoid config dependencies."""
     
-    def __init__(self, api_key: str, temperature: float = 0.7):
+    def __init__(self, api_key: str, temperature: float = 0.3):
         """Initialize the test DeepSeek client."""
         self.api_key = api_key
         self.temperature = temperature
@@ -92,6 +96,26 @@ class TestChatDeepSeekClient:
             return False
 
 
+@pytest.fixture
+def api_key():
+    """Fixture to provide API key for testing."""
+    # Load environment variables from .env.test
+    load_test_environment()
+    
+    api_key = os.getenv('DEEPSEEK_API_KEY')
+    if not api_key:
+        pytest.fail(
+            "❌ DEEPSEEK_API_KEY environment variable is not set!\n"
+            "Please set your DeepSeek API key in .env.test file.\n"
+            "Example .env.test content:\n"
+            "DEEPSEEK_API_KEY=your_api_key_here\n"
+            "You can get an API key from: https://platform.deepseek.com/"
+        )
+    
+    return api_key
+
+
+@pytest.mark.asyncio
 async def test_basic_functionality(api_key: str):
     """Test basic DeepSeek client functionality."""
     logger.info("=" * 50)
@@ -100,7 +124,7 @@ async def test_basic_functionality(api_key: str):
     
     try:
         # Create test client
-        client = TestChatDeepSeekClient(api_key, temperature=0.3)
+        client = TestChatDeepSeekClient(api_key)
         
         # Test 1: Connection test
         logger.info("1. Testing API connection...")
