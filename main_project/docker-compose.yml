@@ -17,9 +17,6 @@ services:
     ports:
       - "8001:8001"
     platform: linux/amd64
-    networks:
-      - jobs_alerts_network
-
 networks:
   jobs_alerts_network:
     external: true
