@@ -1,0 +1,57 @@
+spring:
+  application:
+    name: jobs-alerts-core-service
+  data:
+    mongodb:
+      uri: ${MONGO_URL}
+      database: jobs_alerts
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      use-big-decimal-for-floats: true
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,env,beans,mappings
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+
+telegram:
+  bot:
+    token: ${TELEGRAM_BOT_TOKEN}
+
+admin:
+  user:
+    id: ${ADMIN_USER_ID}
+
+deepseek:
+  api:
+    key: ${DEEPSEEK_API_KEY}
+
+callback:
+  url: ${CALLBACK_URL:http://localhost:8080}
+
+scraper:
+  service:
+    url: ${SCRAPER_SERVICE_URL:http://localhost:8000}
+
+logging:
+  config: classpath:log4j2.xml
+  level:
+    root: ${LOG_LEVEL:INFO}
+    com.jobsalerts: ${LOG_LEVEL:INFO} 

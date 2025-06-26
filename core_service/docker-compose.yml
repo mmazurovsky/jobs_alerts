@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  core-service:
+    build: .
+    container_name: jobs-alerts-core-service
+    ports:
+      - "8080:8080"
+    environment:
+      - MONGO_URL=${MONGO_URL}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - ADMIN_USER_ID=${ADMIN_USER_ID}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - CALLBACK_URL=${CALLBACK_URL:-http://localhost:8080}
+      - SCRAPER_SERVICE_URL=${SCRAPER_SERVICE_URL:-http://linkedin-scraper:8000}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - jobs-alerts-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  jobs-alerts-network:
+    external: true 
