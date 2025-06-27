@@ -3,47 +3,35 @@ package com.jobsalerts.core.domain.model
 import org.springframework.context.ApplicationEvent
 
 // Base event for all job alerts events
-abstract class JobAlertsEvent(
-    val eventData: Any,
-    open val eventSource: String
-) : ApplicationEvent(eventSource)
+sealed class ToTelegramEvent(
+    open val eventData: Any,
+    open val eventSource: String,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
+data class SearchResultsToTelegramEvent(
+    val chatId: Long,
+    override val eventData: List<FullJobListing>,
+    override val eventSource: String,
+) : ToTelegramEvent(eventData, eventSource)
 
 // Message events for Telegram bot communication
-data class SendMessageEvent(
+data class ToTelegramSendMessageEvent(
     val message: String,
-    val chatId: Long?,
+    val chatId: Long,
     override val eventSource: String
-) : JobAlertsEvent(message, eventSource)
+) : ToTelegramEvent(message, eventSource)
 
-// // Job-related events
-// sealed class JobEvent(
-//     eventData: Any,
-//     eventSource: String
-// ) : JobAlertsEvent(eventSource, eventData ) {
-    
-//     data class JobFound(
-//         val source: Any,
-//         val job: JobListing,
-//         val searchId: String
-//     ) : JobEvent(source, job, "job-search")
-    
-//     data class SearchCompleted(
-//         val source: Any,
-//         val searchId: String,
-//         val jobCount: Int
-//     ) : JobEvent(source, jobCount, "job-search")
-    
-//     data class SearchError(
-//         val source: Any,
-//         val searchId: String,
-//         val error: String,
-//         val exception: Throwable? = null
-//     ) : JobEvent(source, error, "job-search")
-    
-//     data class JobsReceived(
-//         val source: Any,
-//         val jobs: List<FullJobListing>,
-//         val searchId: String,
-//         val userId: String
-//     ) : JobEvent(source, jobs, "callback")
-// } 
+// Events coming FROM Telegram
+sealed class FromTelegramEvent(
+        open val message: String,
+        open val userId: Long,
+        val timestamp: Long = System.currentTimeMillis()
+)
+
+data class TelegramMessageReceived(
+        override val message: String,
+        val text: String,
+        val userName: String?,
+        override val userId: Long,
+) : FromTelegramEvent(message, userId)

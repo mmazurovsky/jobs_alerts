@@ -60,7 +60,12 @@ class MainController(
                         "📋 ${job.title}\n🏢 ${job.company}\n📍 ${job.location}\n🔗 ${job.link}"
                     } + if (newJobs.size > 3) "\n\n... and ${newJobs.size - 3} more jobs!" else ""
                 
-                toTelegramEventBus.sendMessage(message, request.userId.toLong(), "job_results")
+                val sendMessageEvent = ToTelegramSendMessageEvent(
+                    message = message,
+                    chatId = request.userId.toLong(),
+                    eventSource = "job_results"
+                )
+                toTelegramEventBus.publish(sendMessageEvent)
                 
                 // Save sent jobs to prevent duplicates
                 val sentJobEntities = newJobs.map { job ->

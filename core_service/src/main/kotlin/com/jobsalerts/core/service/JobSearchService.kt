@@ -28,8 +28,8 @@ class JobSearchService(
         val saved = jobSearchRepository.save(jobSearch)
         logger.info { "Created job search: ${saved.toLogString()}" }
         
-        // Add to scheduler
-        jobSearchScheduler.scheduleJobSearch(saved)
+        // Add to scheduler using new method
+        jobSearchScheduler.addJobSearch(saved)
         
         return saved
     }
@@ -46,7 +46,7 @@ class JobSearchService(
         val search = jobSearchRepository.findByIdAndUserId(searchId, userId)
         if (search != null) {
             jobSearchRepository.deleteById(searchId)
-            jobSearchScheduler.unscheduleJobSearch(searchId)
+            jobSearchScheduler.removeJobSearch(searchId)
             logger.info { "Deleted job search: $searchId for user: $userId" }
             return true
         }
@@ -79,8 +79,7 @@ class JobSearchService(
         val allSearches = jobSearchRepository.findAll()
         logger.info { "Loading ${allSearches.size} existing job searches" }
         
-        allSearches.forEach { search ->
-            jobSearchScheduler.scheduleJobSearch(search)
-        }
+        // Use new bulk method
+        jobSearchScheduler.addInitialJobSearches(allSearches)
     }
 } 

@@ -60,7 +60,7 @@ data class JobSearchOut(
 @Document(collection = "sent_jobs")
 data class SentJobOut(
     @Indexed(unique = false)
-    val userId: Int,
+    val userId: Long,
     @Indexed(unique = false)
     val jobUrl: String,
     val sentAt: Instant = Instant.now()

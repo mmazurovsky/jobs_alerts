@@ -25,7 +25,7 @@ data class JobResultsCallbackRequest(
     @field:NotNull(message = "User ID is required")
     @field:Positive(message = "User ID must be positive")
     @JsonProperty("user_id")
-    val userId: Int,
+    val userId: Long,
     
     @field:NotNull(message = "Jobs list is required")
     @JsonProperty("jobs")
@@ -50,7 +50,19 @@ data class FullJobListing(
     val compatibilityScore: Int? = null,
     @JsonProperty("filter_reason")
     val filterReason: String? = null
-)
+) {
+    fun toMessage(): String {
+        return buildString {
+            appendLine("Compatibility: $compatibilityScore\n")
+            appendLine("Title: $title\n")
+            appendLine("Employer: $company\n")
+            appendLine("Techstack: ${techstack.joinToString(", ")}\n")
+            appendLine("Location: $location\n")
+            appendLine("Created: $createdAgo\n")
+            appendLine("🔗: $link\n")
+        }
+    }
+}
 
 data class JobResultsCallbackResponse(
     val status: String,

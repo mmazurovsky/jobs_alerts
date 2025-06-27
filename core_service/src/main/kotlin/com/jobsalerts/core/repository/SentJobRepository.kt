@@ -6,6 +6,6 @@ import org.springframework.stereotype.Repository
  
 @Repository
 interface SentJobRepository : MongoRepository<SentJobOut, String> {
-    fun findByUserId(userId: Int): List<SentJobOut>
+    fun findByUserId(userId: Long): List<SentJobOut>
     fun existsByUserIdAndJobUrl(userId: Int, jobUrl: String): Boolean
 } 
