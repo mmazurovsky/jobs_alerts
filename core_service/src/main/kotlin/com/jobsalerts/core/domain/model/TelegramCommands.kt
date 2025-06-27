@@ -1,5 +1,6 @@
 package com.jobsalerts.core.domain.model
 
+import com.jobsalerts.core.service.JobSearchService
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboardMarkup
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.KeyboardButton
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.KeyboardRow
@@ -20,7 +21,7 @@ sealed class TelegramCommand {
     abstract val userId: Long
     abstract val username: String?
     
-    abstract suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager)
+    abstract suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager, jobSearchService: JobSearchService)
 }
 
 // Sealed class for text-based commands that start with "/"
@@ -35,7 +36,7 @@ sealed class SlashCommand : TelegramCommand() {
         override val rawCommand: String = "/start",
         override val parameters: String? = null
     ) : SlashCommand() {
-        override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager) {
+        override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager, jobSearchService: JobSearchService) {
             // Reset user session
             sessionManager.updateSession(userId) { 
                 it.copy(state = ConversationState.Idle)
@@ -72,7 +73,7 @@ sealed class SlashCommand : TelegramCommand() {
         override val rawCommand: String = "/help",
         override val parameters: String? = null
     ) : SlashCommand() {
-        override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager) {
+        override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager, jobSearchService: JobSearchService) {
             val helpMessage = """
                 📖 **Job Alerts Bot - Help**
                 
@@ -116,7 +117,7 @@ sealed class SlashCommand : TelegramCommand() {
         override val rawCommand: String = "/menu",
         override val parameters: String? = null
     ) : SlashCommand() {
-        override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager) {
+        override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager, jobSearchService: JobSearchService) {
             // Reset user session to idle
             sessionManager.updateSession(userId) { 
                 it.copy(state = ConversationState.Idle)
@@ -154,7 +155,7 @@ sealed class SlashCommand : TelegramCommand() {
         override val rawCommand: String = "/create_alert",
         override val parameters: String? = null
     ) : SlashCommand() {
-        override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager) {
+        override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager, jobSearchService: JobSearchService) {
             messageSender.sendMessage(chatId, "🔔 Starting job alert creation process...")
             // TODO: Implement create alert functionality
             // This should transition to a conversation state to gather alert details
@@ -171,7 +172,7 @@ sealed class SlashCommand : TelegramCommand() {
         override val rawCommand: String = "/search_now",
         override val parameters: String? = null
     ) : SlashCommand() {
-        override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager) {
+        override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager, jobSearchService: JobSearchService) {
             val searchParams = parameters?.trim()
             val message = if (searchParams.isNullOrEmpty()) {
                 "🔍 Starting immediate job search with your default criteria..."
@@ -190,9 +191,46 @@ sealed class SlashCommand : TelegramCommand() {
         override val rawCommand: String = "/list_alerts",
         override val parameters: String? = null
     ) : SlashCommand() {
-        override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager) {
-            messageSender.sendMessage(chatId, "📋 Listing your job alerts...")
-            // TODO: Implement list alerts functionality
+        override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager, jobSearchService: JobSearchService) {
+            try {
+                val userSearches = jobSearchService.getUserSearches(userId.toInt())
+                
+                if (userSearches.isEmpty()) {
+                    val message = """
+                        📋 **Your Job Alerts**
+                        
+                        You don't have any active job alerts yet.
+                        
+                        **Get started:**
+                        /create_alert - Create your first job alert
+                        /help - See all available commands
+                        
+                        Ready to find your next opportunity? 🚀
+                    """.trimIndent()
+                    
+                    messageSender.sendMessage(chatId, message)
+                } else {
+                    val message = buildString {
+                        appendLine("📋 **Your Active Job Alerts** (${userSearches.size} total)\n")
+                        
+                        userSearches.forEach { jobSearch ->
+                            append(jobSearch.toMessage())
+                            appendLine("─".repeat(40))
+                            appendLine()
+                        }
+                        
+                        appendLine("**Available Actions:**")
+                        appendLine("/edit_alert [ID] - Edit a specific alert")
+                        appendLine("/delete_alert [ID] - Delete a specific alert")
+                        appendLine("/create_alert - Create a new alert")
+                        appendLine("/search_now - Run an immediate search")
+                    }
+                    
+                    messageSender.sendMessage(chatId, message.toString())
+                }
+            } catch (e: Exception) {
+                messageSender.sendMessage(chatId, "❌ Error retrieving your job alerts. Please try again later.")
+            }
         }
     }
     
@@ -203,7 +241,7 @@ sealed class SlashCommand : TelegramCommand() {
         override val rawCommand: String = "/edit_alert",
         override val parameters: String? = null
     ) : SlashCommand() {
-        override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager) {
+        override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager, jobSearchService: JobSearchService) {
             val alertId = parameters?.trim()
             val message = if (alertId.isNullOrEmpty()) {
                 "✏️ Which alert would you like to edit? Please provide the alert ID.\nExample: /edit_alert 123\n\nUse /list_alerts to see your alerts and their IDs."
@@ -222,7 +260,7 @@ sealed class SlashCommand : TelegramCommand() {
         override val rawCommand: String = "/delete_alert",
         override val parameters: String? = null
     ) : SlashCommand() {
-        override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager) {
+        override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager, jobSearchService: JobSearchService) {
             val alertId = parameters?.trim()
             val message = if (alertId.isNullOrEmpty()) {
                 "🗑️ Which alert would you like to delete? Please provide the alert ID.\nExample: /delete_alert 123\n\nUse /list_alerts to see your alerts and their IDs."
@@ -241,7 +279,7 @@ sealed class SlashCommand : TelegramCommand() {
         override val rawCommand: String = "/cancel",
         override val parameters: String? = null
     ) : SlashCommand() {
-        override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager) {
+        override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager, jobSearchService: JobSearchService) {
             // Reset user session
             sessionManager.updateSession(userId) { 
                 it.copy(state = ConversationState.Idle)
@@ -258,7 +296,7 @@ sealed class SlashCommand : TelegramCommand() {
         override val rawCommand: String,
         override val parameters: String? = null
     ) : SlashCommand() {
-        override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager) {
+        override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager, jobSearchService: JobSearchService) {
             messageSender.sendMessage(chatId, "❓ Unknown command: $rawCommand\n\nUse /help to see available commands or /menu for quick access.")
         }
     }
@@ -274,7 +312,7 @@ sealed class TextMessage : TelegramCommand() {
         override val username: String?,
         override val text: String
     ) : TextMessage() {
-        override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager) {
+        override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager, jobSearchService: JobSearchService) {
             val session = sessionManager.getSession(userId, chatId, username)
             
             when (session.state) {

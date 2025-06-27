@@ -3,6 +3,7 @@ package com.jobsalerts.core.bot
 import com.jobsalerts.core.domain.model.*
 import com.jobsalerts.core.infrastructure.FromTelegramEventBus
 import com.jobsalerts.core.infrastructure.ToTelegramEventBus
+import com.jobsalerts.core.service.JobSearchService
 import jakarta.annotation.PostConstruct
 import jakarta.annotation.PreDestroy
 import java.util.concurrent.ConcurrentHashMap
@@ -22,7 +23,8 @@ class TelegramBotService(
     @Value("\${telegram.bot.token}") private val botToken: String,
     @Value("\${telegram.bot.username}") private val botUsername: String,
     private val fromTelegramEventBus: FromTelegramEventBus,
-    private val toTelegramEventBus: ToTelegramEventBus
+    private val toTelegramEventBus: ToTelegramEventBus,
+    private val jobSearchService: JobSearchService
 ) : TelegramLongPollingBot(botToken), Logging, MessageSender, UserSessionManager {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -66,7 +68,7 @@ class TelegramBotService(
                                                 username,
                                                 message.text
                                         )
-                                command.execute(this@TelegramBotService, this@TelegramBotService)
+                                command.execute(this@TelegramBotService, this@TelegramBotService, jobSearchService)
                             }
                             message.hasText() -> {
                                 val textMessage =
@@ -77,7 +79,7 @@ class TelegramBotService(
                                                 message.text,
                                                 getSession(userId, chatId, username).state
                                         )
-                                textMessage.execute(this@TelegramBotService, this@TelegramBotService)
+                                textMessage.execute(this@TelegramBotService, this@TelegramBotService, jobSearchService)
                             }
                         }
                     }
