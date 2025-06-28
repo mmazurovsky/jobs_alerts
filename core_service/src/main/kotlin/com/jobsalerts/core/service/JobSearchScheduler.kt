@@ -1,7 +1,7 @@
 package com.jobsalerts.core.service
 
 import com.jobsalerts.core.domain.model.JobSearchOut
-import com.jobsalerts.core.domain.model.SearchJobsParams
+import com.jobsalerts.core.service.ScraperJobService
 import jakarta.annotation.PostConstruct
 import jakarta.annotation.PreDestroy
 import kotlinx.coroutines.runBlocking
@@ -10,22 +10,17 @@ import kotlinx.coroutines.sync.withPermit
 import org.apache.logging.log4j.kotlin.Logging
 import org.quartz.*
 import org.quartz.impl.StdSchedulerFactory
-import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import java.util.concurrent.ConcurrentHashMap
 
 @Service
 class JobSearchScheduler(
-    private val scraperClient: ScraperClient
+    private val scraperJobService: ScraperJobService
 ) : Logging {
     
     private lateinit var scheduler: Scheduler
     private val activeSearches: MutableMap<String, JobSearchOut> = ConcurrentHashMap()
-    private val semaphore = Semaphore(4) // Limit to 4 concurrent jobs like main_project
     
-    @Value("\${callback.url}")
-    private lateinit var callbackBaseUrl: String
-
     @PostConstruct
     fun initializeScheduler() {
         scheduler = StdSchedulerFactory.getDefaultScheduler()
@@ -124,49 +119,7 @@ class JobSearchScheduler(
         }
     }
 
-    suspend fun triggerScraperJobAndLog(jobSearch: JobSearchOut) {
-        // Log all job search parameters like main_project
-        val logData = mapOf(
-            "job_search_id" to jobSearch.id,
-            "user_id" to jobSearch.userId,
-            "keywords" to jobSearch.jobTitle,
-            "location" to jobSearch.location,
-            "job_types" to jobSearch.jobTypes.map { it.label },
-            "remote_types" to jobSearch.remoteTypes.map { it.label },
-            "time_period" to jobSearch.timePeriod.displayName
-        )
-        
-        logger.info { "Requesting scraper job: $logData" }
-        
-        // Build callback URL
-        val callbackUrl = callbackBaseUrl.trimEnd('/') + "/api/job-results-callback"
-        
-        val params = SearchJobsParams(
-            keywords = jobSearch.jobTitle,
-            location = jobSearch.location,
-            jobTypes = jobSearch.jobTypes.map { it.label },
-            remoteTypes = jobSearch.remoteTypes.map { it.label },
-            timePeriod = jobSearch.timePeriod.displayName,
-            filterText = jobSearch.filterText,
-            callbackUrl = callbackUrl,
-            jobSearchId = jobSearch.id,
-            userId = jobSearch.userId
-        )
-        
-        try {
-            val response = scraperClient.searchJobs(params)
-            val logDataWithStatus = logData + ("callback_url" to callbackUrl) + ("status_code" to response.statusCode)
-            
-            if (response.isSuccessful) {
-                logger.info { "Successfully triggered scraper job: $logDataWithStatus" }
-            } else {
-                val logDataWithResponse = logDataWithStatus + ("response_text" to response.body)
-                logger.error { "Failed to trigger scraper job: $logDataWithResponse" }
-            }
-        } catch (e: Exception) {
-            logger.error(e) { "Exception triggering scraper job: $logData" }
-        }
-    }
+    
 
     fun getActiveSearchesCount(): Int = activeSearches.size
     
@@ -177,21 +130,18 @@ class JobSearchScheduler(
             try {
                 val searchId = context.jobDetail.jobDataMap.getString("searchId")
                 val scheduler = context.jobDetail.jobDataMap.get("scheduler") as JobSearchScheduler
-                
+
                 logger.info { "Executing scheduled job search: $searchId" }
-                
-                // Execute in coroutine scope with semaphore like main_project
+
                 runBlocking {
-                    scheduler.semaphore.withPermit {
-                        val jobSearch = scheduler.activeSearches[searchId]
-                        if (jobSearch != null) {
-                            scheduler.triggerScraperJobAndLog(jobSearch)
-                        } else {
-                            logger.warn { "Job search not found in active searches: $searchId" }
-                        }
+                    val jobSearch = scheduler.activeSearches[searchId]
+                    if (jobSearch != null) {
+                        scheduler.scraperJobService.triggerScraperJobAndLog(jobSearch)
+                    } else {
+                        logger.warn { "Job search not found in active searches: $searchId" }
                     }
                 }
-                
+
                 logger.info { "Completed scheduled job search: $searchId" }
             } catch (e: Exception) {
                 logger.error(e) { "Error executing scheduled job search" }

@@ -5,35 +5,15 @@ import com.jobsalerts.core.repository.JobSearchRepository
 import org.apache.logging.log4j.kotlin.Logging
 import org.springframework.stereotype.Service
 
-import java.util.*
-
 @Service
 class JobSearchService(
     private val jobSearchRepository: JobSearchRepository,
-    private val jobSearchScheduler: JobSearchScheduler
+    private val jobSearchScheduler: JobSearchScheduler,
+    private val scraperJobService: ScraperJobService
 ) : Logging {
     
-    suspend fun createJobSearch(input: JobSearchIn): JobSearchOut {
-        val jobSearch = JobSearchOut(
-            id = UUID.randomUUID().toString(),
-            jobTitle = input.jobTitle,
-            location = input.location,
-            jobTypes = input.jobTypes,
-            remoteTypes = input.remoteTypes,
-            timePeriod = input.timePeriod,
-            userId = input.userId,
-            filterText = input.filterText
-        )
+
         
-        val saved = jobSearchRepository.save(jobSearch)
-        logger.info { "Created job search: ${saved.toLogString()}" }
-        
-        // Add to scheduler using new method
-        jobSearchScheduler.addJobSearch(saved)
-        
-        return saved
-    }
-    
     fun getUserSearches(userId: Int): List<JobSearchOut> {
         return jobSearchRepository.findByUserId(userId)
     }

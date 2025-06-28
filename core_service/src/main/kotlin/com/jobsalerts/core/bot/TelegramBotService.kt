@@ -4,6 +4,8 @@ import com.jobsalerts.core.domain.model.*
 import com.jobsalerts.core.infrastructure.FromTelegramEventBus
 import com.jobsalerts.core.infrastructure.ToTelegramEventBus
 import com.jobsalerts.core.service.JobSearchService
+import com.jobsalerts.core.service.ImmediateSearchService
+import com.jobsalerts.core.service.AlertCreationService
 import jakarta.annotation.PostConstruct
 import jakarta.annotation.PreDestroy
 import java.util.concurrent.ConcurrentHashMap
@@ -24,7 +26,9 @@ class TelegramBotService(
     @Value("\${telegram.bot.username}") private val botUsername: String,
     private val fromTelegramEventBus: FromTelegramEventBus,
     private val toTelegramEventBus: ToTelegramEventBus,
-    private val jobSearchService: JobSearchService
+    private val jobSearchService: JobSearchService,
+    private val immediateSearchService: ImmediateSearchService,
+    private val alertCreationService: AlertCreationService
 ) : TelegramLongPollingBot(botToken), Logging, MessageSender, UserSessionManager {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -68,7 +72,7 @@ class TelegramBotService(
                                                 username,
                                                 message.text
                                         )
-                                command.execute(this@TelegramBotService, this@TelegramBotService, jobSearchService)
+                                command.execute(this@TelegramBotService, this@TelegramBotService, jobSearchService, immediateSearchService, alertCreationService)
                             }
                             message.hasText() -> {
                                 val textMessage =
@@ -79,7 +83,7 @@ class TelegramBotService(
                                                 message.text,
                                                 getSession(userId, chatId, username).state
                                         )
-                                textMessage.execute(this@TelegramBotService, this@TelegramBotService, jobSearchService)
+                                textMessage.execute(this@TelegramBotService, this@TelegramBotService, jobSearchService, immediateSearchService, alertCreationService)
                             }
                         }
                     }
@@ -111,8 +115,6 @@ class TelegramBotService(
     override suspend fun sendMessage(chatId: Long, message: String) {
         sendMessageWithSplitting(chatId, message)
     }
-
-
 
     // Event handling for outbound messages
     private suspend fun handleToTelegramEvent(event: ToTelegramEvent) {
@@ -151,9 +153,8 @@ class TelegramBotService(
                     if (index == 0) {
                         part
                     } else {
-                        "(continued...)\n\n$part"
+                        "(continued...)\n$part"
                     }
-
 
             sendSingleMessage(chatId, messageToSend)
 

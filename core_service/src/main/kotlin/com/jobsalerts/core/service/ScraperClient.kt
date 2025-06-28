@@ -29,7 +29,7 @@ class ScraperClient(
         }
     }
     
-    suspend fun searchJobs(params: SearchJobsParams): ScraperResponse {
+    suspend fun scrapeJobs(params: SearchJobsParams): ScraperResponse {
         return try {
             val response = client.post("${scraperConfig.url}/search_jobs") {
                 contentType(ContentType.Application.Json)
