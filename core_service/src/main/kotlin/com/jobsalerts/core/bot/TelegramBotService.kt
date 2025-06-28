@@ -6,6 +6,7 @@ import com.jobsalerts.core.infrastructure.ToTelegramEventBus
 import com.jobsalerts.core.service.JobSearchService
 import com.jobsalerts.core.service.ImmediateSearchService
 import com.jobsalerts.core.service.AlertCreationService
+import com.jobsalerts.core.service.SessionManager
 import jakarta.annotation.PostConstruct
 import jakarta.annotation.PreDestroy
 import java.util.concurrent.ConcurrentHashMap
@@ -28,11 +29,11 @@ class TelegramBotService(
     private val toTelegramEventBus: ToTelegramEventBus,
     private val jobSearchService: JobSearchService,
     private val immediateSearchService: ImmediateSearchService,
-    private val alertCreationService: AlertCreationService
-) : TelegramLongPollingBot(botToken), Logging, MessageSender, UserSessionManager {
+    private val alertCreationService: AlertCreationService,
+    private val sessionManager: SessionManager
+) : TelegramLongPollingBot(botToken), Logging, MessageSender {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val userSessions = ConcurrentHashMap<Long, UserSession>()
     private var outboundSubscription: Job? = null
 
     override fun getBotUsername(): String = botUsername
@@ -72,7 +73,7 @@ class TelegramBotService(
                                                 username,
                                                 message.text
                                         )
-                                command.execute(this@TelegramBotService, this@TelegramBotService, jobSearchService, immediateSearchService, alertCreationService)
+                                command.execute(this@TelegramBotService, sessionManager, jobSearchService, immediateSearchService, alertCreationService)
                             }
                             message.hasText() -> {
                                 val textMessage =
@@ -81,9 +82,9 @@ class TelegramBotService(
                                                 userId,
                                                 username,
                                                 message.text,
-                                                getSession(userId, chatId, username).state
+                                                sessionManager.getCurrentContext(userId)
                                         )
-                                textMessage.execute(this@TelegramBotService, this@TelegramBotService, jobSearchService, immediateSearchService, alertCreationService)
+                                textMessage.execute(this@TelegramBotService, sessionManager, jobSearchService, immediateSearchService, alertCreationService)
                             }
                         }
                     }
@@ -95,21 +96,7 @@ class TelegramBotService(
         }
     }
 
-    // Implementation of UserSessionManager interface
-    override fun getSession(userId: Long, chatId: Long, username: String?): UserSession {
-        return userSessions.computeIfAbsent(userId) { UserSession(userId, chatId, username) }
-    }
 
-    override fun updateSession(userId: Long, update: (UserSession) -> UserSession) {
-        userSessions.compute(userId) { _, existingSession ->
-            if (existingSession != null) {
-                update(existingSession).copy(updatedAt = System.currentTimeMillis())
-            } else {
-                logger.warn { "Attempted to update non-existent session for user $userId" }
-                existingSession
-            }
-        }
-    }
 
     // Implementation of MessageSender interface
     override suspend fun sendMessage(chatId: Long, message: String) {

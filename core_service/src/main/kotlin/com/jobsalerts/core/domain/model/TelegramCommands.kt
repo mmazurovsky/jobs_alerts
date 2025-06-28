@@ -45,10 +45,8 @@ sealed class SlashCommand : TelegramCommand() {
         override val parameters: String? = null
     ) : SlashCommand() {
         override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager, jobSearchService: JobSearchService, immediateSearchService: ImmediateSearchService?, alertCreationService: AlertCreationService?) {
-            // Reset user session
-            sessionManager.updateSession(userId) { 
-                it.copy(state = ConversationState.Idle)
-            }
+            // Reset user session to idle context
+            sessionManager.resetToIdle(userId)
             
             val welcomeMessage = """
                 🤖 Welcome to Job Alerts Bot!
@@ -126,10 +124,8 @@ sealed class SlashCommand : TelegramCommand() {
         override val parameters: String? = null
     ) : SlashCommand() {
         override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager, jobSearchService: JobSearchService, immediateSearchService: ImmediateSearchService?, alertCreationService: AlertCreationService?) {
-            // Reset user session to idle
-            sessionManager.updateSession(userId) { 
-                it.copy(state = ConversationState.Idle)
-            }
+            // Reset user session to idle context
+            sessionManager.resetToIdle(userId)
             
             val menuMessage = """
                 📋 **Main Menu**
@@ -169,37 +165,37 @@ sealed class SlashCommand : TelegramCommand() {
                 return
             }
             
-            alertCreationService.startAlertCreation(
-                messageSender = messageSender,
-                sessionManager = sessionManager,
-                userId = userId,
-                chatId = chatId,
-                initialDescription = parameters?.trim()
-            )
-        }
-    }
-    
-    data class ImmediateSearch(
-        override val chatId: Long,
-        override val userId: Long,
-        override val username: String?,
-        override val rawCommand: String = "/search_now",
-        override val parameters: String? = null
-    ) : SlashCommand() {
-        override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager, jobSearchService: JobSearchService, immediateSearchService: ImmediateSearchService?, alertCreationService: AlertCreationService?) {
-            if (immediateSearchService == null) {
-                messageSender.sendMessage(chatId, "❌ Immediate search service is not available. Please try again later.")
-                return
-            }
+            val initialDescription = parameters?.trim()
             
-            immediateSearchService.startImmediateSearch(
-                messageSender = messageSender,
-                sessionManager = sessionManager,
-                userId = userId,
-                chatId = chatId,
-                username = username,
-                initialDescription = parameters?.trim()
-            )
+            if (!initialDescription.isNullOrBlank()) {
+                // User provided description with command, process it directly
+                sessionManager.setContext(userId, CommandContext.CreateAlert(CreateAlertSubContext.CollectingDescription))
+                alertCreationService.processAlertDescription(
+                    messageSender = messageSender,
+                    sessionManager = sessionManager,
+                    userId = userId,
+                    chatId = chatId,
+                    description = initialDescription
+                )
+            } else {
+                // Set initial context and show instructions
+                sessionManager.setContext(userId, CommandContext.CreateAlert(CreateAlertSubContext.Initial))
+                sessionManager.updateSession(userId) { session ->
+                    session.copy(
+                        retryCount = 0,
+                        pendingJobSearch = null
+                    )
+                }
+                
+                val instructionsMessage = buildString {
+                    appendLine("🔔 **Creating a new job alert**")
+                    appendLine()
+                    append(JobSearchIn.getFormattingInstructions())
+                    appendLine()
+                    appendLine("💡 **Note:** This will create a recurring alert that searches for jobs automatically!")
+                }
+                messageSender.sendMessage(chatId, instructionsMessage)
+            }
         }
     }
     
@@ -211,6 +207,9 @@ sealed class SlashCommand : TelegramCommand() {
         override val parameters: String? = null
     ) : SlashCommand() {
         override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager, jobSearchService: JobSearchService, immediateSearchService: ImmediateSearchService?, alertCreationService: AlertCreationService?) {
+            // Set context to ListAlerts
+            sessionManager.setContext(userId, CommandContext.ListAlerts())
+            
             try {
                 val userSearches = jobSearchService.getUserSearches(userId.toInt())
                 
@@ -262,13 +261,39 @@ sealed class SlashCommand : TelegramCommand() {
     ) : SlashCommand() {
         override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager, jobSearchService: JobSearchService, immediateSearchService: ImmediateSearchService?, alertCreationService: AlertCreationService?) {
             val alertId = parameters?.trim()
-            val message = if (alertId.isNullOrEmpty()) {
-                "✏️ Which alert would you like to edit? Please provide the alert ID.\nExample: /edit_alert 123\n\nUse /list_alerts to see your alerts and their IDs."
+            
+            if (alertId.isNullOrEmpty()) {
+                // No alert ID provided, ask user to select one
+                sessionManager.setContext(userId, CommandContext.EditAlert(EditAlertSubContext.SelectingAlert))
+                val message = buildString {
+                    appendLine("✏️ **Edit Job Alert**")
+                    appendLine()
+                    appendLine("Which alert would you like to edit? Please provide the alert ID.")
+                    appendLine()
+                    appendLine("**Example:** `123` (just the ID number)")
+                    appendLine()
+                    appendLine("Use /list_alerts to see your alerts and their IDs.")
+                    appendLine("Use /cancel to abort this operation.")
+                }
+                messageSender.sendMessage(chatId, message)
             } else {
-                "✏️ Editing job alert: $alertId"
+                // Alert ID provided, move to collecting changes
+                sessionManager.setContext(userId, CommandContext.EditAlert(EditAlertSubContext.CollectingChanges))
+                sessionManager.updateSession(userId) { session ->
+                    session.copy(selectedAlertId = alertId)
+                }
+                
+                val message = buildString {
+                    appendLine("✏️ **Editing Alert: $alertId**")
+                    appendLine()
+                    appendLine("Please provide the new job search criteria:")
+                    appendLine()
+                    append(JobSearchIn.getFormattingInstructions())
+                    appendLine()
+                    appendLine("Use /cancel to abort this operation.")
+                }
+                messageSender.sendMessage(chatId, message)
             }
-            messageSender.sendMessage(chatId, message)
-            // TODO: Implement edit alert functionality
         }
     }
     
@@ -281,13 +306,41 @@ sealed class SlashCommand : TelegramCommand() {
     ) : SlashCommand() {
         override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager, jobSearchService: JobSearchService, immediateSearchService: ImmediateSearchService?, alertCreationService: AlertCreationService?) {
             val alertId = parameters?.trim()
-            val message = if (alertId.isNullOrEmpty()) {
-                "🗑️ Which alert would you like to delete? Please provide the alert ID.\nExample: /delete_alert 123\n\nUse /list_alerts to see your alerts and their IDs."
+            
+            if (alertId.isNullOrEmpty()) {
+                // No alert ID provided, ask user to select one
+                sessionManager.setContext(userId, CommandContext.DeleteAlert(DeleteAlertSubContext.SelectingAlert))
+                val message = buildString {
+                    appendLine("🗑️ **Delete Job Alert**")
+                    appendLine()
+                    appendLine("Which alert would you like to delete? Please provide the alert ID.")
+                    appendLine()
+                    appendLine("**Example:** `123` (just the ID number)")
+                    appendLine()
+                    appendLine("Use /list_alerts to see your alerts and their IDs.")
+                    appendLine("Use /cancel to abort this operation.")
+                }
+                messageSender.sendMessage(chatId, message)
             } else {
-                "🗑️ Are you sure you want to delete alert: $alertId?\nReply 'yes' to confirm or 'no' to cancel."
+                // Alert ID provided, ask for confirmation
+                sessionManager.setContext(userId, CommandContext.DeleteAlert(DeleteAlertSubContext.ConfirmingDeletion))
+                sessionManager.updateSession(userId) { session ->
+                    session.copy(selectedAlertId = alertId)
+                }
+                
+                val message = buildString {
+                    appendLine("🗑️ **Delete Alert Confirmation**")
+                    appendLine()
+                    appendLine("Are you sure you want to delete alert: **$alertId**?")
+                    appendLine()
+                    appendLine("⚠️ **Warning:** This action cannot be undone!")
+                    appendLine()
+                    appendLine("• Reply '**yes**' to confirm deletion")
+                    appendLine("• Reply '**no**' to cancel")
+                    appendLine("• Use /cancel to abort this operation")
+                }
+                messageSender.sendMessage(chatId, message)
             }
-            messageSender.sendMessage(chatId, message)
-            // TODO: Implement delete alert functionality with confirmation
         }
     }
     
@@ -299,10 +352,8 @@ sealed class SlashCommand : TelegramCommand() {
         override val parameters: String? = null
     ) : SlashCommand() {
         override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager, jobSearchService: JobSearchService, immediateSearchService: ImmediateSearchService?, alertCreationService: AlertCreationService?) {
-            // Reset user session
-            sessionManager.updateSession(userId) { 
-                it.copy(state = ConversationState.Idle)
-            }
+            // Reset user session to idle context
+            sessionManager.resetToIdle(userId)
             
             messageSender.sendMessage(chatId, "❌ Operation cancelled. Use /menu to see available options.")
         }
@@ -333,9 +384,10 @@ sealed class TextMessage : TelegramCommand() {
     ) : TextMessage() {
         override suspend fun execute(messageSender: MessageSender, sessionManager: UserSessionManager, jobSearchService: JobSearchService, immediateSearchService: ImmediateSearchService?, alertCreationService: AlertCreationService?) {
             val session = sessionManager.getSession(userId, chatId, username)
+            val currentContext = sessionManager.getCurrentContext(userId)
             
-            when (session.state) {
-                ConversationState.Idle -> {
+            when (currentContext) {
+                CommandContext.Idle -> {
                     // Handle natural language or quick commands
                     val lowerText = text.lowercase().trim()
                     when {
@@ -365,125 +417,229 @@ sealed class TextMessage : TelegramCommand() {
                         }
                     }
                 }
-                ConversationState.WaitingForInput -> {
-                    // Handle conversation flow - this could be confirmation, input, etc.
-                    val lowerText = text.lowercase().trim()
-                    if (lowerText in listOf("yes", "y", "confirm")) {
-                        messageSender.sendMessage(chatId, "✅ Confirmed!")
-                        sessionManager.updateSession(userId) { 
-                            it.copy(state = ConversationState.Idle)
+                is CommandContext.CreateAlert -> {
+                    when (currentContext.subContext) {
+                        CreateAlertSubContext.Initial -> {
+                            // User is responding to initial instructions, move to collecting description
+                            sessionManager.setSubContext(userId, CreateAlertSubContext.CollectingDescription)
+                            // Process their description
+                            if (alertCreationService != null) {
+                                alertCreationService.processAlertDescription(
+                                    messageSender = messageSender,
+                                    sessionManager = sessionManager,
+                                    userId = userId,
+                                    chatId = chatId,
+                                    description = text
+                                )
+                            } else {
+                                messageSender.sendMessage(chatId, "❌ Service unavailable. Please try again later.")
+                                sessionManager.resetToIdle(userId)
+                            }
                         }
-                    } else if (lowerText in listOf("no", "n", "cancel")) {
-                        messageSender.sendMessage(chatId, "❌ Cancelled. Use /menu to see available options.")
-                        sessionManager.updateSession(userId) { 
-                            it.copy(state = ConversationState.Idle)
+                        CreateAlertSubContext.CollectingDescription -> {
+                            // User is providing alert description
+                            if (alertCreationService != null) {
+                                alertCreationService.processAlertDescription(
+                                    messageSender = messageSender,
+                                    sessionManager = sessionManager,
+                                    userId = userId,
+                                    chatId = chatId,
+                                    description = text
+                                )
+                            } else {
+                                messageSender.sendMessage(chatId, "❌ Service unavailable. Please try again later.")
+                                sessionManager.resetToIdle(userId)
+                            }
                         }
-                    } else {
-                        messageSender.sendMessage(chatId, "Please respond with 'yes' or 'no', or use /cancel to stop.")
-                    }
-                }
-                ConversationState.WaitingForJobSearchDescription -> {
-                    // User is providing job search description
-                    if (immediateSearchService != null) {
-                        immediateSearchService.processJobSearchDescription(
-                            messageSender = messageSender,
-                            sessionManager = sessionManager,
-                            userId = userId,
-                            chatId = chatId,
-                            username = username,
-                            description = text
-                        )
-                    } else {
-                        messageSender.sendMessage(chatId, "❌ Service unavailable. Please try again later.")
-                        sessionManager.updateSession(userId) { 
-                            it.copy(state = ConversationState.Idle)
+                        CreateAlertSubContext.ConfirmingDetails -> {
+                            // User is confirming or rejecting the parsed alert
+                            if (alertCreationService != null) {
+                                alertCreationService.processConfirmation(
+                                    messageSender = messageSender,
+                                    sessionManager = sessionManager,
+                                    userId = userId,
+                                    chatId = chatId,
+                                    username = username,
+                                    confirmation = text
+                                )
+                            } else {
+                                messageSender.sendMessage(chatId, "❌ Service unavailable. Please try again later.")
+                                sessionManager.resetToIdle(userId)
+                            }
                         }
-                    }
-                }
-                ConversationState.WaitingForJobSearchConfirmation -> {
-                    // User is confirming or rejecting the parsed job search
-                    if (immediateSearchService != null) {
-                        immediateSearchService.processConfirmation(
-                            messageSender = messageSender,
-                            sessionManager = sessionManager,
-                            userId = userId,
-                            chatId = chatId,
-                            username = username,
-                            confirmation = text
-                        )
-                    } else {
-                        messageSender.sendMessage(chatId, "❌ Service unavailable. Please try again later.")
-                        sessionManager.updateSession(userId) { 
-                            it.copy(state = ConversationState.Idle)
-                        }
-                    }
-                }
-                ConversationState.WaitingForAlertDescription -> {
-                    // User is providing alert description
-                    if (alertCreationService != null) {
-                        alertCreationService.processAlertDescription(
-                            messageSender = messageSender,
-                            sessionManager = sessionManager,
-                            userId = userId,
-                            chatId = chatId,
-                            description = text
-                        )
-                    } else {
-                        messageSender.sendMessage(chatId, "❌ Service unavailable. Please try again later.")
-                        sessionManager.updateSession(userId) { 
-                            it.copy(state = ConversationState.Idle)
+                        else -> {
+                            messageSender.sendMessage(chatId, "I'm not sure what you're trying to do. Use /cancel to reset or /menu for options.")
                         }
                     }
                 }
-                ConversationState.WaitingForAlertConfirmation -> {
-                    // User is confirming or rejecting the parsed alert
-                    if (alertCreationService != null) {
-                        alertCreationService.processConfirmation(
-                            messageSender = messageSender,
-                            sessionManager = sessionManager,
-                            userId = userId,
-                            chatId = chatId,
-                            username = username,
-                            confirmation = text
-                        )
-                    } else {
-                        messageSender.sendMessage(chatId, "❌ Service unavailable. Please try again later.")
-                        sessionManager.updateSession(userId) { 
-                            it.copy(state = ConversationState.Idle)
+                is CommandContext.SearchNow -> {
+                    when (currentContext.subContext) {
+                        SearchNowSubContext.Initial -> {
+                            // User is responding to initial instructions, move to collecting description
+                            sessionManager.setSubContext(userId, SearchNowSubContext.CollectingDescription)
+                            // Process their description
+                            if (immediateSearchService != null) {
+                                immediateSearchService.processJobSearchDescription(
+                                    messageSender = messageSender,
+                                    sessionManager = sessionManager,
+                                    userId = userId,
+                                    chatId = chatId,
+                                    description = text
+                                )
+                            } else {
+                                messageSender.sendMessage(chatId, "❌ Service unavailable. Please try again later.")
+                                sessionManager.resetToIdle(userId)
+                            }
+                        }
+                        SearchNowSubContext.CollectingDescription -> {
+                            // User is providing job search description
+                            if (immediateSearchService != null) {
+                                immediateSearchService.processJobSearchDescription(
+                                    messageSender = messageSender,
+                                    sessionManager = sessionManager,
+                                    userId = userId,
+                                    chatId = chatId,
+                                    description = text
+                                )
+                            } else {
+                                messageSender.sendMessage(chatId, "❌ Service unavailable. Please try again later.")
+                                sessionManager.resetToIdle(userId)
+                            }
+                        }
+                        SearchNowSubContext.ConfirmingDetails -> {
+                            // User is confirming or rejecting the parsed job search
+                            if (immediateSearchService != null) {
+                                immediateSearchService.processConfirmation(
+                                    messageSender = messageSender,
+                                    sessionManager = sessionManager,
+                                    userId = userId,
+                                    chatId = chatId,
+                                    username = username,
+                                    confirmation = text
+                                )
+                            } else {
+                                messageSender.sendMessage(chatId, "❌ Service unavailable. Please try again later.")
+                                sessionManager.resetToIdle(userId)
+                            }
+                        }
+                        else -> {
+                            messageSender.sendMessage(chatId, "I'm not sure what you're trying to do. Use /cancel to reset or /menu for options.")
                         }
                     }
+                }
+                is CommandContext.EditAlert -> {
+                    when (currentContext.subContext) {
+                        EditAlertSubContext.SelectingAlert -> {
+                            // User is providing alert ID to edit
+                            val alertId = text.trim()
+                            if (alertId.isBlank()) {
+                                messageSender.sendMessage(chatId, "Please provide a valid alert ID. Use /list_alerts to see your alerts.")
+                                return
+                            }
+                            
+                            // Move to collecting changes subcontext
+                            sessionManager.setSubContext(userId, EditAlertSubContext.CollectingChanges)
+                            sessionManager.updateSession(userId) { session ->
+                                session.copy(selectedAlertId = alertId)
+                            }
+                            
+                            val message = buildString {
+                                appendLine("✏️ **Editing Alert: $alertId**")
+                                appendLine()
+                                appendLine("Please provide the new job search criteria:")
+                                appendLine()
+                                append(JobSearchIn.getFormattingInstructions())
+                                appendLine()
+                                appendLine("Use /cancel to abort this operation.")
+                            }
+                            messageSender.sendMessage(chatId, message)
+                        }
+                        EditAlertSubContext.CollectingChanges -> {
+                            // User is providing new criteria for the alert
+                            // TODO: Implement alert editing logic here
+                            messageSender.sendMessage(chatId, "⚠️ Alert editing functionality is not yet implemented. Use /cancel to exit.")
+                        }
+                        EditAlertSubContext.ConfirmingChanges -> {
+                            // User is confirming the changes
+                            // TODO: Implement confirmation logic here
+                            messageSender.sendMessage(chatId, "⚠️ Alert editing functionality is not yet implemented. Use /cancel to exit.")
+                        }
+                        else -> {
+                            messageSender.sendMessage(chatId, "I'm not sure what you're trying to do. Use /cancel to reset or /menu for options.")
+                        }
+                    }
+                }
+                is CommandContext.DeleteAlert -> {
+                    when (currentContext.subContext) {
+                        DeleteAlertSubContext.SelectingAlert -> {
+                            // User is providing alert ID to delete
+                            val alertId = text.trim()
+                            if (alertId.isBlank()) {
+                                messageSender.sendMessage(chatId, "Please provide a valid alert ID. Use /list_alerts to see your alerts.")
+                                return
+                            }
+                            
+                            // Move to confirming deletion subcontext
+                            sessionManager.setSubContext(userId, DeleteAlertSubContext.ConfirmingDeletion)
+                            sessionManager.updateSession(userId) { session ->
+                                session.copy(selectedAlertId = alertId)
+                            }
+                            
+                            val message = buildString {
+                                appendLine("🗑️ **Delete Alert Confirmation**")
+                                appendLine()
+                                appendLine("Are you sure you want to delete alert: **$alertId**?")
+                                appendLine()
+                                appendLine("⚠️ **Warning:** This action cannot be undone!")
+                                appendLine()
+                                appendLine("• Reply '**yes**' to confirm deletion")
+                                appendLine("• Reply '**no**' to cancel")
+                                appendLine("• Use /cancel to abort this operation")
+                            }
+                            messageSender.sendMessage(chatId, message)
+                        }
+                        DeleteAlertSubContext.ConfirmingDeletion -> {
+                            // User is confirming or canceling deletion
+                            val lowerConfirmation = text.lowercase().trim()
+                            val alertId = session.selectedAlertId
+                            
+                            when {
+                                lowerConfirmation in listOf("yes", "y", "confirm", "delete") -> {
+                                    if (alertId != null) {
+                                        try {
+                                            // TODO: Implement actual deletion logic here
+                                            messageSender.sendMessage(chatId, "✅ **Alert $alertId has been deleted successfully.**")
+                                            sessionManager.resetToIdle(userId)
+                                        } catch (e: Exception) {
+                                            messageSender.sendMessage(chatId, "❌ Failed to delete alert $alertId. Please try again later.")
+                                            sessionManager.resetToIdle(userId)
+                                        }
+                                    } else {
+                                        messageSender.sendMessage(chatId, "❌ No alert ID found. Please start over with /delete_alert.")
+                                        sessionManager.resetToIdle(userId)
+                                    }
+                                }
+                                lowerConfirmation in listOf("no", "n", "cancel") -> {
+                                    messageSender.sendMessage(chatId, "❌ Alert deletion cancelled. Your alert is safe!")
+                                    sessionManager.resetToIdle(userId)
+                                }
+                                else -> {
+                                    messageSender.sendMessage(chatId, "Please respond with '**yes**' to delete the alert, '**no**' to cancel, or /cancel to abort.")
+                                }
+                            }
+                        }
+                        else -> {
+                            messageSender.sendMessage(chatId, "I'm not sure what you're trying to do. Use /cancel to reset or /menu for options.")
+                        }
+                    }
+                }
+                else -> {
+                    // Handle other contexts or unknown states
+                    messageSender.sendMessage(chatId, "I'm not sure what you're trying to do in this context. Use /cancel to reset or /menu for options.")
                 }
             }
         }
     }
-}
-
-// Simple conversation state for basic flow
-sealed class ConversationState {
-    data object Idle : ConversationState()
-    data object WaitingForInput : ConversationState()
-    data object WaitingForJobSearchDescription : ConversationState()
-    data object WaitingForJobSearchConfirmation : ConversationState()
-    data object WaitingForAlertDescription : ConversationState()
-    data object WaitingForAlertConfirmation : ConversationState()
-}
-
-// Basic user session
-data class UserSession(
-    val userId: Long,
-    val chatId: Long,
-    val username: String?,
-    val state: ConversationState = ConversationState.Idle,
-    val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis(),
-    val pendingJobSearch: JobSearchIn? = null,
-    val retryCount: Int = 0
-)
-
-// Session management interface
-interface UserSessionManager {
-    fun getSession(userId: Long, chatId: Long, username: String?): UserSession
-    fun updateSession(userId: Long, update: (UserSession) -> UserSession)
 }
 
 // Command parsing utilities
@@ -520,7 +676,7 @@ object TelegramCommandParser {
         userId: Long,
         username: String?,
         text: String,
-        state: ConversationState
+        context: CommandContext
     ): TextMessage {
         return TextMessage.Regular(chatId, userId, username, text)
     }

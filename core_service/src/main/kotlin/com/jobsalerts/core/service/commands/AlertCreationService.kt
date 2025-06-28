@@ -12,36 +12,7 @@ class AlertCreationService(
     private val jobSearchScheduler: JobSearchScheduler
 ) : Logging {
 
-    suspend fun startAlertCreation(
-        messageSender: MessageSender,
-        sessionManager: UserSessionManager,
-        userId: Long,
-        chatId: Long,
-        initialDescription: String? = null
-    ) {
-        if (!initialDescription.isNullOrBlank()) {
-            // User provided initial description, try to parse it
-            processAlertDescription(messageSender, sessionManager, userId, chatId, initialDescription)
-        } else {
-            // Start the conversation flow
-            sessionManager.updateSession(userId) { session ->
-                session.copy(
-                    state = ConversationState.WaitingForAlertDescription,
-                    retryCount = 0,
-                    pendingJobSearch = null
-                )
-            }
-            
-            val instructionsMessage = buildString {
-                appendLine("🔔 **Creating a new job alert**")
-                appendLine()
-                append(JobSearchIn.getFormattingInstructions())
-                appendLine()
-                appendLine("💡 **Note:** This will create a recurring alert that searches for jobs automatically!")
-            }
-            messageSender.sendMessage(chatId, instructionsMessage)
-        }
-    }
+
 
     suspend fun processAlertDescription(
         messageSender: MessageSender,
@@ -70,9 +41,9 @@ class AlertCreationService(
                     appendLine("• Use /cancel to abort")
                 }
                 
+                sessionManager.setContext(userId, CommandContext.CreateAlert(CreateAlertSubContext.ConfirmingDetails))
                 sessionManager.updateSession(userId) { session ->
                     session.copy(
-                        state = ConversationState.WaitingForAlertConfirmation,
                         pendingJobSearch = parseResult.jobSearchIn,
                         retryCount = 0
                     )
@@ -145,9 +116,9 @@ class AlertCreationService(
                     append(JobSearchIn.getFormattingInstructions())
                 }
                 
+                sessionManager.setContext(userId, CommandContext.CreateAlert(CreateAlertSubContext.CollectingDescription))
                 sessionManager.updateSession(userId) { session ->
                     session.copy(
-                        state = ConversationState.WaitingForAlertDescription,
                         pendingJobSearch = null,
                         retryCount = session.retryCount + 1
                     )
@@ -231,12 +202,6 @@ class AlertCreationService(
     }
 
     private fun resetSession(sessionManager: UserSessionManager, userId: Long) {
-        sessionManager.updateSession(userId) { session ->
-            session.copy(
-                state = ConversationState.Idle,
-                pendingJobSearch = null,
-                retryCount = 0
-            )
-        }
+        sessionManager.resetToIdle(userId)
     }
 } 

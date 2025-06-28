@@ -8,33 +8,12 @@ import org.springframework.stereotype.Service
 class ImmediateSearchService(
     private val jobSearchParserService: JobSearchParserService,
     private val jobSearchService: JobSearchService,
-    private val scraperJobService: ScraperJobService
+    private val scraperJobService: ScraperJobService,
+    private val messageSender: MessageSender,
+    private val sessionManager: UserSessionManager,
 ) : Logging {
 
-    suspend fun startImmediateSearch(
-        messageSender: MessageSender,
-        sessionManager: UserSessionManager,
-        userId: Long,
-        chatId: Long,
-        initialDescription: String? = null
-    ) {
-        if (!initialDescription.isNullOrBlank()) {
-            // User provided initial description, try to parse it
-            processJobSearchDescription(messageSender, sessionManager, userId, chatId, initialDescription)
-        } else {
-            // Start the conversation flow
-            sessionManager.updateSession(userId) { session ->
-                session.copy(
-                    state = ConversationState.WaitingForJobSearchDescription,
-                    retryCount = 0,
-                    pendingJobSearch = null
-                )
-            }
-            
-            val instructionsMessage = JobSearchIn.getFormattingInstructions()
-            messageSender.sendMessage(chatId, instructionsMessage)
-        }
-    }
+
 
     private suspend fun triggerImmediateSearch(input: JobSearchIn): String {
         // Create a temporary job search object without saving it to database
@@ -53,16 +32,46 @@ class ImmediateSearchService(
         }
     }
 
+     suspend fun slashCommand(userId: Long, parameters: String?) {
+        
+        val initialDescription = parameters?.trim()
+        
+        if (!initialDescription.isNullOrBlank()) {
+            // User provided description with command, process it directly
+            sessionManager.setContext(userId, CommandContext.SearchNow(SearchNowSubContext.CollectingDescription))
+            processJobSearchDescription(
+                userId = userId,
+                description = initialDescription
+            )
+        } else {
+            // Set initial context and show instructions
+            sessionManager.setContext(userId, CommandContext.SearchNow(SearchNowSubContext.Initial))
+            sessionManager.updateSession(userId) { session ->
+                session.copy(
+                    retryCount = 0,
+                    pendingJobSearch = null
+                )
+            }
+            
+            val instructionsMessage = buildString {
+                appendLine("🔍 **Running an immediate job search**")
+                appendLine()
+                append(JobSearchIn.getFormattingInstructions())
+                appendLine()
+                appendLine("💡 **Note:** This is a one-time search that will start executing immediately!")
+            }
+            messageSender.sendMessage(userId, instructionsMessage)
+        }
+    }
+
+
 
     suspend fun processJobSearchDescription(
-        messageSender: MessageSender,
-        sessionManager: UserSessionManager,
         userId: Long,
-        chatId: Long,
         description: String
     ) {
         try {
-            messageSender.sendMessage(chatId, "🔍 Analyzing your job search description...")
+            messageSender.sendMessage(userId, "🔍 Analyzing your job search description...")
             
             val parseResult = jobSearchParserService.parseUserInput(description, userId.toInt())
             
@@ -79,38 +88,35 @@ class ImmediateSearchService(
                     appendLine("• Use /cancel to abort")
                 }
                 
+                sessionManager.setContext(userId, CommandContext.SearchNow(SearchNowSubContext.ConfirmingDetails))
                 sessionManager.updateSession(userId) { session ->
                     session.copy(
-                        state = ConversationState.WaitingForJobSearchConfirmation,
                         pendingJobSearch = parseResult.jobSearchIn,
                         retryCount = 0
                     )
                 }
                 
-                messageSender.sendMessage(chatId, confirmationMessage)
+                messageSender.sendMessage(userId, confirmationMessage)
             } else {
                 // Parsing failed, ask for retry
-                handleParseFailure(messageSender, sessionManager, userId, chatId, parseResult)
+                handleParseFailure(userId, parseResult)
             }
         } catch (e: Exception) {
             logger.error(e) { "Error processing job search description for user $userId" }
-            messageSender.sendMessage(chatId, "❌ An error occurred while processing your request. Please try again or use /cancel to abort.")
+            messageSender.sendMessage(userId, "❌ An error occurred while processing your request. Please try again or use /cancel to abort.")
         }
     }
 
     suspend fun processConfirmation(
-        messageSender: MessageSender,
-        sessionManager: UserSessionManager,
         userId: Long,
-        chatId: Long,
         username: String?,
         confirmation: String
     ) {
-        val session = sessionManager.getSession(userId, chatId, username)
+        val session = sessionManager.getSession(userId, userId, username)
         val jobSearch = session.pendingJobSearch
         
         if (jobSearch == null) {
-            messageSender.sendMessage(chatId, "❌ No pending job search found. Please start over with /search_now")
+            messageSender.sendMessage(userId, "❌ No pending job search found. Please start over with /search_now")
             resetSession(sessionManager, userId)
             return
         }
@@ -120,7 +126,7 @@ class ImmediateSearchService(
         when {
             lowerConfirmation in listOf("yes", "y", "confirm", "ok", "proceed") -> {
                 try {
-                    messageSender.sendMessage(chatId, "🚀 **Starting your job search...**")
+                    messageSender.sendMessage(userId, "🚀 **Starting your job search...**")
                     
                     val searchId = triggerImmediateSearch(jobSearch)
                     
@@ -136,12 +142,12 @@ class ImmediateSearchService(
                         appendLine("Use /menu to access other options.")
                     }
                     
-                    messageSender.sendMessage(chatId, successMessage)
+                    messageSender.sendMessage(userId, successMessage)
                     resetSession(sessionManager, userId)
                     
                 } catch (e: Exception) {
                     logger.error(e) { "Error triggering immediate search for user $userId" }
-                    messageSender.sendMessage(chatId, "❌ Failed to start job search. Please try again later or contact support.")
+                    messageSender.sendMessage(userId, "❌ Failed to start job search. Please try again later or contact support.")
                     resetSession(sessionManager, userId)
                 }
             }
@@ -153,31 +159,28 @@ class ImmediateSearchService(
                     append(JobSearchIn.getFormattingInstructions())
                 }
                 
+                sessionManager.setContext(userId, CommandContext.SearchNow(SearchNowSubContext.CollectingDescription))
                 sessionManager.updateSession(userId) { session ->
                     session.copy(
-                        state = ConversationState.WaitingForJobSearchDescription,
                         pendingJobSearch = null,
                         retryCount = session.retryCount + 1
                     )
                 }
                 
-                messageSender.sendMessage(chatId, retryMessage)
+                messageSender.sendMessage(userId, retryMessage)
             }
             
             else -> {
-                messageSender.sendMessage(chatId, "Please respond with '**yes**' to proceed, '**no**' to modify, or /cancel to abort.")
+                messageSender.sendMessage(userId, "Please respond with '**yes**' to proceed, '**no**' to modify, or /cancel to abort.")
             }
         }
     }
 
     private suspend fun handleParseFailure(
-        messageSender: MessageSender,
-        sessionManager: UserSessionManager,
         userId: Long,
-        chatId: Long,
         parseResult: JobSearchParseResult
     ) {
-        val session = sessionManager.getSession(userId, chatId, "")
+        val session = sessionManager.getSession(userId, userId, "")
         val newRetryCount = session.retryCount + 1
         
         if (newRetryCount >= 3) {
@@ -199,7 +202,7 @@ class ImmediateSearchService(
                 session.copy(retryCount = newRetryCount)
             }
             
-            messageSender.sendMessage(chatId, fallbackMessage)
+            messageSender.sendMessage(userId, fallbackMessage)
         } else {
             val errorMessage = buildString {
                 appendLine("❌ **${parseResult.errorMessage}**")
@@ -222,17 +225,11 @@ class ImmediateSearchService(
                 session.copy(retryCount = newRetryCount)
             }
             
-            messageSender.sendMessage(chatId, errorMessage)
+            messageSender.sendMessage(userId, errorMessage)
         }
     }
 
     private fun resetSession(sessionManager: UserSessionManager, userId: Long) {
-        sessionManager.updateSession(userId) { session ->
-            session.copy(
-                state = ConversationState.Idle,
-                pendingJobSearch = null,
-                retryCount = 0
-            )
-        }
+        sessionManager.resetToIdle(userId)
     }
 } 
