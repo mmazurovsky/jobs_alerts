@@ -34,4 +34,7 @@ data class TelegramMessageReceived(
         val text: String,
         val userName: String?,
         override val userId: Long,
+        val chatId: Long,
+        val commandName: String? = null,
+        val commandParameters: String? = null,
 ) : FromTelegramEvent(message, userId)

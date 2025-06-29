@@ -613,8 +613,8 @@ sealed class TextMessage : TelegramCommand() {
                                         } catch (e: Exception) {
                                             messageSender.sendMessage(chatId, "❌ Failed to delete alert $alertId. Please try again later.")
                                             sessionManager.resetToIdle(userId)
-                                        }
-                                    } else {
+                        }
+                    } else {
                                         messageSender.sendMessage(chatId, "❌ No alert ID found. Please start over with /delete_alert.")
                                         sessionManager.resetToIdle(userId)
                                     }

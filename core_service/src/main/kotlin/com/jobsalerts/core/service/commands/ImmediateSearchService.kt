@@ -1,6 +1,11 @@
 package com.jobsalerts.core.service
 
 import com.jobsalerts.core.domain.model.*
+import com.jobsalerts.core.infrastructure.FromTelegramEventBus
+import com.jobsalerts.core.infrastructure.ToTelegramEventBus
+import jakarta.annotation.PostConstruct
+import jakarta.annotation.PreDestroy
+import kotlinx.coroutines.*
 import org.apache.logging.log4j.kotlin.Logging
 import org.springframework.stereotype.Service
 
@@ -9,11 +14,91 @@ class ImmediateSearchService(
     private val jobSearchParserService: JobSearchParserService,
     private val jobSearchService: JobSearchService,
     private val scraperJobService: ScraperJobService,
-    private val messageSender: MessageSender,
-    private val sessionManager: UserSessionManager,
+    private val fromTelegramEventBus: FromTelegramEventBus,
+    private val toTelegramEventBus: ToTelegramEventBus,
+    private val sessionManager: SessionManager
 ) : Logging {
 
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var eventSubscription: Job? = null
 
+    @PostConstruct
+    fun initialize() {
+        eventSubscription = fromTelegramEventBus.subscribe(serviceScope) { event ->
+            handleEvent(event)
+        }
+        logger.info { "ImmediateSearchService initialized and subscribed to events" }
+    }
+
+    @PreDestroy
+    fun cleanup() {
+        eventSubscription?.cancel()
+        serviceScope.cancel()
+        logger.info { "ImmediateSearchService cleanup completed" }
+    }
+
+    private suspend fun handleEvent(event: FromTelegramEvent) {
+        if (event is TelegramMessageReceived) {
+            val initialDescription = event.commandParameters?.trim()
+            val currentContext = sessionManager.getCurrentContext(event.userId)
+
+            when {
+                // User sent /search_now without parameters -> start flow, show instructions
+                event.commandName == "/search_now" && initialDescription.isNullOrEmpty() -> {
+                    sessionManager.setContext(event.userId, SearchNowSubContext.Initial)
+                    try {
+                        processInitial(event)
+                    } catch (e: Exception) {
+                        logger.error(e) { "Error processing initial search for user ${event.userId}" }
+                    }
+                }
+
+                // User sent /search_now with a description OR we are in CollectingDescription context
+                (event.commandName == "/search_now" && !initialDescription.isNullOrEmpty()) ||
+                        currentContext is SearchNowSubContext.CollectingDescription -> {
+                    sessionManager.setContext(event.userId, SearchNowSubContext.CollectingDescription)
+                    val descriptionToUse = if (!initialDescription.isNullOrEmpty()) initialDescription else event.text
+                    try {
+                        processJobSearchDescription(event.chatId, event.userId, descriptionToUse)
+                    } catch (e: Exception) {
+                        logger.error(e) { "Error processing job search description for user ${event.userId}" }
+                    }
+                }
+
+                // We already parsed and are waiting for confirmation
+                currentContext is SearchNowSubContext.ConfirmingDetails -> {
+                    processConfirmation(event.chatId, event.userId, event.userName, event.text)
+                }
+
+                // User cancelled
+                event.commandName == "/cancel" && currentContext is SearchNowSubContext -> {
+                    sendMessage(event.chatId, "❌ Immediate search cancelled.")
+                    sessionManager.resetToIdle(event.userId)
+                }
+            }
+        }
+    }
+
+    private suspend fun processInitial(event: TelegramMessageReceived) {
+        val instructionsMessage = buildString {
+            appendLine("🔍 **Running an immediate job search**")
+            appendLine()
+            append(JobSearchIn.getFormattingInstructions())
+            appendLine()
+            appendLine("💡 **Note:** This is a one-time search that will start executing immediately!")
+        }
+  
+        sendMessage(event.chatId, instructionsMessage)
+        sessionManager.setContext(event.userId, SearchNowSubContext.CollectingDescription)
+    }
+
+    private suspend fun sendMessage(chatId: Long, message: String) {
+        toTelegramEventBus.publish(ToTelegramSendMessageEvent(
+            message = message,
+            chatId = chatId,
+            eventSource = "ImmediateSearchService"
+        ))
+    }
 
     private suspend fun triggerImmediateSearch(input: JobSearchIn): String {
         // Create a temporary job search object without saving it to database
@@ -32,46 +117,13 @@ class ImmediateSearchService(
         }
     }
 
-     suspend fun slashCommand(userId: Long, parameters: String?) {
-        
-        val initialDescription = parameters?.trim()
-        
-        if (!initialDescription.isNullOrBlank()) {
-            // User provided description with command, process it directly
-            sessionManager.setContext(userId, CommandContext.SearchNow(SearchNowSubContext.CollectingDescription))
-            processJobSearchDescription(
-                userId = userId,
-                description = initialDescription
-            )
-        } else {
-            // Set initial context and show instructions
-            sessionManager.setContext(userId, CommandContext.SearchNow(SearchNowSubContext.Initial))
-            sessionManager.updateSession(userId) { session ->
-                session.copy(
-                    retryCount = 0,
-                    pendingJobSearch = null
-                )
-            }
-            
-            val instructionsMessage = buildString {
-                appendLine("🔍 **Running an immediate job search**")
-                appendLine()
-                append(JobSearchIn.getFormattingInstructions())
-                appendLine()
-                appendLine("💡 **Note:** This is a one-time search that will start executing immediately!")
-            }
-            messageSender.sendMessage(userId, instructionsMessage)
-        }
-    }
-
-
-
-    suspend fun processJobSearchDescription(
+    private suspend fun processJobSearchDescription(
+        chatId: Long,
         userId: Long,
         description: String
     ) {
         try {
-            messageSender.sendMessage(userId, "🔍 Analyzing your job search description...")
+            sendMessage(chatId, "🔍 Analyzing your job search description...")
             
             val parseResult = jobSearchParserService.parseUserInput(description, userId.toInt())
             
@@ -88,36 +140,37 @@ class ImmediateSearchService(
                     appendLine("• Use /cancel to abort")
                 }
                 
-                sessionManager.setContext(userId, CommandContext.SearchNow(SearchNowSubContext.ConfirmingDetails))
                 sessionManager.updateSession(userId) { session ->
                     session.copy(
                         pendingJobSearch = parseResult.jobSearchIn,
                         retryCount = 0
                     )
                 }
+                sessionManager.setContext(userId, SearchNowSubContext.ConfirmingDetails)
                 
-                messageSender.sendMessage(userId, confirmationMessage)
+                sendMessage(chatId, confirmationMessage)
             } else {
                 // Parsing failed, ask for retry
-                handleParseFailure(userId, parseResult)
+                handleParseFailure(chatId, userId, parseResult)
             }
         } catch (e: Exception) {
             logger.error(e) { "Error processing job search description for user $userId" }
-            messageSender.sendMessage(userId, "❌ An error occurred while processing your request. Please try again or use /cancel to abort.")
+            sendMessage(chatId, "❌ An error occurred while processing your request. Please try again or use /cancel to abort.")
         }
     }
 
-    suspend fun processConfirmation(
+    private suspend fun processConfirmation(
+        chatId: Long,
         userId: Long,
         username: String?,
         confirmation: String
     ) {
-        val session = sessionManager.getSession(userId, userId, username)
+        val session = sessionManager.getSession(userId, chatId, username)
         val jobSearch = session.pendingJobSearch
         
         if (jobSearch == null) {
-            messageSender.sendMessage(userId, "❌ No pending job search found. Please start over with /search_now")
-            resetSession(sessionManager, userId)
+            sendMessage(chatId, "❌ No pending job search found. Please start over with /search_now")
+            sessionManager.resetToIdle(userId)
             return
         }
 
@@ -126,7 +179,7 @@ class ImmediateSearchService(
         when {
             lowerConfirmation in listOf("yes", "y", "confirm", "ok", "proceed") -> {
                 try {
-                    messageSender.sendMessage(userId, "🚀 **Starting your job search...**")
+                    sendMessage(chatId, "🚀 **Starting your job search...**")
                     
                     val searchId = triggerImmediateSearch(jobSearch)
                     
@@ -142,13 +195,13 @@ class ImmediateSearchService(
                         appendLine("Use /menu to access other options.")
                     }
                     
-                    messageSender.sendMessage(userId, successMessage)
-                    resetSession(sessionManager, userId)
+                    sendMessage(chatId, successMessage)
+                    sessionManager.resetToIdle(userId)
                     
                 } catch (e: Exception) {
                     logger.error(e) { "Error triggering immediate search for user $userId" }
-                    messageSender.sendMessage(userId, "❌ Failed to start job search. Please try again later or contact support.")
-                    resetSession(sessionManager, userId)
+                    sendMessage(chatId, "❌ Failed to start job search. Please try again later or contact support.")
+                    sessionManager.resetToIdle(userId)
                 }
             }
             
@@ -159,7 +212,7 @@ class ImmediateSearchService(
                     append(JobSearchIn.getFormattingInstructions())
                 }
                 
-                sessionManager.setContext(userId, CommandContext.SearchNow(SearchNowSubContext.CollectingDescription))
+                sessionManager.setContext(userId, SearchNowSubContext.CollectingDescription)
                 sessionManager.updateSession(userId) { session ->
                     session.copy(
                         pendingJobSearch = null,
@@ -167,20 +220,21 @@ class ImmediateSearchService(
                     )
                 }
                 
-                messageSender.sendMessage(userId, retryMessage)
+                sendMessage(chatId, retryMessage)
             }
             
             else -> {
-                messageSender.sendMessage(userId, "Please respond with '**yes**' to proceed, '**no**' to modify, or /cancel to abort.")
+                sendMessage(chatId, "Please respond with '**yes**' to proceed, '**no**' to modify, or /cancel to abort.")
             }
         }
     }
 
     private suspend fun handleParseFailure(
+        chatId: Long,
         userId: Long,
         parseResult: JobSearchParseResult
     ) {
-        val session = sessionManager.getSession(userId, userId, "")
+        val session = sessionManager.getSession(userId, chatId, "")
         val newRetryCount = session.retryCount + 1
         
         if (newRetryCount >= 3) {
@@ -202,7 +256,7 @@ class ImmediateSearchService(
                 session.copy(retryCount = newRetryCount)
             }
             
-            messageSender.sendMessage(userId, fallbackMessage)
+            sendMessage(chatId, fallbackMessage)
         } else {
             val errorMessage = buildString {
                 appendLine("❌ **${parseResult.errorMessage}**")
@@ -225,11 +279,7 @@ class ImmediateSearchService(
                 session.copy(retryCount = newRetryCount)
             }
             
-            messageSender.sendMessage(userId, errorMessage)
+            sendMessage(chatId, errorMessage)
         }
-    }
-
-    private fun resetSession(sessionManager: UserSessionManager, userId: Long) {
-        sessionManager.resetToIdle(userId)
     }
 } 

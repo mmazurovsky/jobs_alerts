@@ -27,9 +27,6 @@ class TelegramBotService(
     @Value("\${telegram.bot.username}") private val botUsername: String,
     private val fromTelegramEventBus: FromTelegramEventBus,
     private val toTelegramEventBus: ToTelegramEventBus,
-    private val jobSearchService: JobSearchService,
-    private val immediateSearchService: ImmediateSearchService,
-    private val alertCreationService: AlertCreationService,
     private val sessionManager: SessionManager
 ) : TelegramLongPollingBot(botToken), Logging, MessageSender {
 
@@ -64,28 +61,31 @@ class TelegramBotService(
 
                         logger.info { "Received message from user $userId: ${message.text?.take(50)}..." }
 
-                        when {
-                            message.hasText() && message.text.startsWith("/") -> {
-                                val command =
-                                        TelegramCommandParser.parseSlashCommand(
-                                                chatId,
-                                                userId,
-                                                username,
-                                                message.text
-                                        )
-                                command.execute(this@TelegramBotService, sessionManager, jobSearchService, immediateSearchService, alertCreationService)
+                        // Dispatch all messages to the event bus
+                        if (message.hasText()) {
+                            val isCommand = message.text.startsWith("/")
+
+                            // Extract command information if it's a command
+                            val (commandName, commandParameters) = if (isCommand) {
+                                val parts = message.text.split(" ", limit = 2)
+                                val command = parts[0].lowercase()
+                                val parameters = if (parts.size > 1) parts[1] else null
+                                Pair(command, parameters)
+                            } else {
+                                Pair(null, null)
                             }
-                            message.hasText() -> {
-                                val textMessage =
-                                        TelegramCommandParser.parseTextMessage(
-                                                chatId,
-                                                userId,
-                                                username,
-                                                message.text,
-                                                sessionManager.getCurrentContext(userId)
-                                        )
-                                textMessage.execute(this@TelegramBotService, sessionManager, jobSearchService, immediateSearchService, alertCreationService)
-                            }
+                            
+                        
+                            val telegramEvent = TelegramMessageReceived(
+                                message = message.text,
+                                text = message.text,
+                                userName = username,
+                                userId = userId,
+                                chatId = chatId,
+                                commandName = commandName,
+                                commandParameters = commandParameters,
+                            )
+                            fromTelegramEventBus.publish(telegramEvent)
                         }
                     }
                     // Note: Callback queries removed - using slash commands only
