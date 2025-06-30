@@ -22,7 +22,7 @@ class JobSearchService(
         return jobSearchRepository.findById(searchId).orElse(null)
     }
     
-    suspend fun deleteJobSearch(userId: Int, searchId: String): Boolean {
+    suspend fun deleteJobSearch(userId: Long, searchId: String): Boolean {
         val search = jobSearchRepository.findByIdAndUserId(searchId, userId)
         if (search != null) {
             jobSearchRepository.deleteById(searchId)

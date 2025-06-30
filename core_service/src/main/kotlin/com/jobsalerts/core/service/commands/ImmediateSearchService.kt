@@ -125,7 +125,7 @@ class ImmediateSearchService(
         try {
             sendMessage(chatId, "🔍 Analyzing your job search description...")
             
-            val parseResult = jobSearchParserService.parseUserInput(description, userId.toInt())
+            val parseResult = jobSearchParserService.parseUserInput(description, userId)
             
             if (parseResult.success && parseResult.jobSearchIn != null) {
                 // Successfully parsed, show for confirmation

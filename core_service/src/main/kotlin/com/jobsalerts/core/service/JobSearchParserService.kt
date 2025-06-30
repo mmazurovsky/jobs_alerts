@@ -21,7 +21,7 @@ class JobSearchParserService(
 
     private val objectMapper: ObjectMapper = jacksonObjectMapper()
 
-    suspend fun parseUserInput(userInput: String, userId: Int): JobSearchParseResult {
+    suspend fun parseUserInput(userInput: String, userId: Long): JobSearchParseResult {
         return try {
             if (!deepSeekClient.isAvailable()) {
                 logger.warn { "DeepSeek API not available, falling back to basic parsing" }
@@ -86,7 +86,7 @@ class JobSearchParserService(
         """.trimIndent()
     }
 
-    private fun parseDeepSeekResponse(response: String, userId: Int): JobSearchParseResult {
+    private fun parseDeepSeekResponse(response: String, userId: Long): JobSearchParseResult {
         return try {
             // Extract JSON from response (remove any markdown formatting)
             val jsonString = response.trim()
@@ -147,7 +147,7 @@ class JobSearchParserService(
         }
     }
 
-    private fun parseBasicInput(userInput: String, userId: Int): JobSearchParseResult {
+    private fun parseBasicInput(userInput: String, userId: Long): JobSearchParseResult {
         // Fallback basic parsing when DeepSeek is not available
         val words = userInput.lowercase().split("\\s+".toRegex())
         

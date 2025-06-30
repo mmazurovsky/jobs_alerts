@@ -4,6 +4,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import org.springframework.data.annotation.Id
+import org.springframework.data.mongodb.core.mapping.Field
 import org.springframework.data.mongodb.core.index.Indexed
 import org.springframework.data.mongodb.core.mapping.Document
 
@@ -34,7 +35,7 @@ data class JobSearchIn(
         val jobTypes: List<JobType>,
         val remoteTypes: List<RemoteType>,
         val timePeriod: TimePeriod,
-        val userId: Int,
+        val userId: Long,
         val filterText: String? = null
 ) {
     fun toHumanReadableString(): String {
@@ -112,14 +113,14 @@ data class JobSearchIn(
 @Document(collection = "job_searches")
 data class JobSearchOut(
         @Id val id: String,
-        val jobTitle: String,
+        @field:Field("job_title") val jobTitle: String,
         val location: String,
-        val jobTypes: List<JobType> = emptyList(),
-        val remoteTypes: List<RemoteType> = emptyList(),
-        val timePeriod: TimePeriod,
-        val userId: Int,
-        val createdAt: Instant = Instant.now(),
-        val filterText: String? = null
+        @field:Field("job_types") val jobTypes: List<JobType> = emptyList(),
+        @field:Field("remote_types") val remoteTypes: List<RemoteType> = emptyList(),
+        @field:Field("time_period") val timePeriod: TimePeriod,
+        @field:Field("user_id") val userId: Long,
+        @field:Field("created_at") val createdAt: Instant = Instant.now(),
+        @field:Field("filter_text") val filterText: String? = null
 ) {
     fun toLogString(): String {
         return "id=$id, title=$jobTitle, location=$location, " +
@@ -182,9 +183,9 @@ data class JobSearchOut(
 
 @Document(collection = "sent_jobs")
 data class SentJobOut(
-        @Indexed(unique = false) val userId: Long,
-        @Indexed(unique = false) val jobUrl: String,
-        val sentAt: Instant = Instant.now()
+        @Indexed(unique = false) @field:Field("user_id") val userId: Long,
+        @Indexed(unique = false) @field:Field("job_url") val jobUrl: String,
+        @field:Field("sent_at") val sentAt: Instant = Instant.now()
 )
 
 data class SearchJobsParams(
@@ -196,7 +197,7 @@ data class SearchJobsParams(
         val filterText: String? = null,
         val callbackUrl: String,
         val jobSearchId: String? = null,
-        val userId: Int? = null
+        val userId: Long? = null
 )
 
-data class JobSearchRemove(val userId: Int, val searchId: String)
+data class JobSearchRemove(val userId: Long, val searchId: String)

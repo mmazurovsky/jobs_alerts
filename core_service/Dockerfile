@@ -2,15 +2,19 @@ FROM eclipse-temurin:21-jdk-alpine AS builder
 
 WORKDIR /app
 
-# Copy gradle files
-COPY build.gradle.kts settings.gradle.kts ./
-COPY gradle gradle
+# Copy gradle files from core_service
+COPY core_service/build.gradle.kts core_service/settings.gradle.kts ./
+COPY core_service/gradle gradle
+COPY core_service/gradlew ./
+
+# Make gradlew executable
+RUN chmod +x gradlew
 
 # Download dependencies
 RUN ./gradlew dependencies --no-daemon
 
 # Copy source code
-COPY src src
+COPY core_service/src src
 
 # Build application
 RUN ./gradlew bootJar --no-daemon

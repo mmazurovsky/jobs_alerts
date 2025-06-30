@@ -45,11 +45,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core")
 
     // ── Telegram Bot ─────────────────────────────────────────────
-    implementation("org.telegram:telegrambots:6.9.7.1") {
-        exclude(group = "com.fasterxml.jackson.module", module = "jackson-module-jaxb-annotations")
-        exclude(group = "com.fasterxml.jackson.jaxrs", module = "jackson-jaxrs-json-provider")
-    }
-    implementation("org.telegram:telegrambots-spring-boot-starter:6.9.7.1")
+    implementation("dev.inmo:tgbotapi:15.2.0")
 
     // ── HTTP (Ktor 2) ────────────────────────────────────────────
     val ktorVersion = "2.3.12"

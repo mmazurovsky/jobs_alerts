@@ -35,37 +35,52 @@ class StartService(
     }
 
     private suspend fun handleEvent(event: FromTelegramEvent) {
+        logger.info { "🎯 StartService: RECEIVED EVENT: $event" }
+        
         if (event is TelegramMessageReceived) {
+            logger.info { "📨 StartService: Processing TelegramMessageReceived - commandName='${event.commandName}', userId=${event.userId}" }
             val currentContext = sessionManager.getCurrentContext(event.userId)
+            logger.info { "🔄 StartService: Current user context: $currentContext" }
             
             when {
                 event.commandName == "/start" -> {
+                    logger.info { "🚀 StartService: Processing /start command for user ${event.userId}" }
                     sessionManager.setContext(event.userId, StartSubContext.ShowingWelcome)
                     try {
                         processStartRequest(event.chatId, event.userId)
+                        logger.info { "✅ StartService: Successfully processed /start command" }
                     } catch (e: Exception) {
-                        logger.error(e) { "Error processing start request for user ${event.userId}" }
+                        logger.error(e) { "💥 StartService: Error processing start request for user ${event.userId}" }
                         sendMessage(event.chatId, "❌ Error displaying welcome message. Please try again later.")
                         sessionManager.resetToIdle(event.userId)
                     }
                 }
                 
                 event.commandName == "/menu" -> {
+                    logger.info { "📋 StartService: Processing /menu command for user ${event.userId}" }
                     sessionManager.setContext(event.userId, StartSubContext.ShowingWelcome)
                     try {
                         processMenuRequest(event.chatId, event.userId)
+                        logger.info { "✅ StartService: Successfully processed /menu command" }
                     } catch (e: Exception) {
-                        logger.error(e) { "Error processing menu request for user ${event.userId}" }
+                        logger.error(e) { "💥 StartService: Error processing menu request for user ${event.userId}" }
                         sendMessage(event.chatId, "❌ Error displaying menu. Please try again later.")
                         sessionManager.resetToIdle(event.userId)
                     }
                 }
                 
                 event.commandName == "/cancel" && currentContext is StartSubContext -> {
+                    logger.info { "❌ StartService: Processing /cancel command for user ${event.userId}" }
                     sendMessage(event.chatId, "❌ Operation cancelled.")
                     sessionManager.resetToIdle(event.userId)
                 }
+                
+                else -> {
+                    logger.debug { "🔇 StartService: Ignoring event - commandName='${event.commandName}', currentContext=$currentContext" }
+                }
             }
+        } else {
+            logger.debug { "🔇 StartService: Ignoring non-TelegramMessageReceived event: $event" }
         }
     }
 

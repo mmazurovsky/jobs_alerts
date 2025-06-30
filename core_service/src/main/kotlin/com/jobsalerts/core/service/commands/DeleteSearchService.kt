@@ -235,7 +235,7 @@ class DeleteSearchService(
                     val failedIds = mutableListOf<String>()
                     
                     alertIdList.forEach { alertId ->
-                        val success = jobSearchService.deleteJobSearch(userId.toInt(), alertId)
+                        val success = jobSearchService.deleteJobSearch(userId, alertId)
                         if (success) {
                             deletedIds.add(alertId)
                         } else {

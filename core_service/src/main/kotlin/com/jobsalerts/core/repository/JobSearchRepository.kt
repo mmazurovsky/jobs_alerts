@@ -7,6 +7,6 @@ import org.springframework.stereotype.Repository
 @Repository
 interface JobSearchRepository : MongoRepository<JobSearchOut, String> {
     fun findByUserId(userId: Long): List<JobSearchOut>
-    fun findByIdAndUserId(id: String, userId: Int): JobSearchOut?
-    fun deleteByIdAndUserId(id: String, userId: Int): Long
+    fun findByIdAndUserId(id: String, userId: Long): JobSearchOut?
+    fun deleteByIdAndUserId(id: String, userId: Long): Long
 }

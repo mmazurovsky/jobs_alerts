@@ -35,26 +35,39 @@ class HelpService(
     }
 
     private suspend fun handleEvent(event: FromTelegramEvent) {
+        logger.info { "📚 HelpService: RECEIVED EVENT: $event" }
+        
         if (event is TelegramMessageReceived) {
+            logger.info { "📨 HelpService: Processing TelegramMessageReceived - commandName='${event.commandName}', userId=${event.userId}" }
             val currentContext = sessionManager.getCurrentContext(event.userId)
+            logger.info { "🔄 HelpService: Current user context: $currentContext" }
             
             when {
                 event.commandName == "/help" -> {
+                    logger.info { "📖 HelpService: Processing /help command for user ${event.userId}" }
                     sessionManager.setContext(event.userId, HelpSubContext.ShowingHelp)
                     try {
                         processHelpRequest(event.chatId, event.userId)
+                        logger.info { "✅ HelpService: Successfully processed /help command" }
                     } catch (e: Exception) {
-                        logger.error(e) { "Error processing help request for user ${event.userId}" }
+                        logger.error(e) { "💥 HelpService: Error processing help request for user ${event.userId}" }
                         sendMessage(event.chatId, "❌ Error displaying help. Please try again later.")
                         sessionManager.resetToIdle(event.userId)
                     }
                 }
                 
                 event.commandName == "/cancel" && currentContext is HelpSubContext -> {
+                    logger.info { "❌ HelpService: Processing /cancel command for user ${event.userId}" }
                     sendMessage(event.chatId, "❌ Help cancelled.")
                     sessionManager.resetToIdle(event.userId)
                 }
+                
+                else -> {
+                    logger.debug { "🔇 HelpService: Ignoring event - commandName='${event.commandName}', currentContext=$currentContext" }
+                }
             }
+        } else {
+            logger.debug { "🔇 HelpService: Ignoring non-TelegramMessageReceived event: $event" }
         }
     }
 

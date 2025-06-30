@@ -1,16 +1,18 @@
 spring:
+  config:
+    activate:
+      on-profile: prod,local
   application:
     name: jobs-alerts-core-service
   data:
     mongodb:
-      uri: ${MONGO_URL}
-      database: jobs_alerts
+      # Use the same MongoDB URI pattern that works in the other Spring app
+      uri: mongodb+srv://${MONGO_USER}:${MONGO_PASSWORD}@${MONGO_HOST}/${MONGO_DB}?tls=true&authSource=admin
   jackson:
     serialization:
       write-dates-as-timestamps: false
     deserialization:
       use-big-decimal-for-floats: true
-
 server:
   port: 8080
 
@@ -36,3 +38,6 @@ logging:
   level:
     root: ${LOG_LEVEL:INFO}
     com.jobsalerts: ${LOG_LEVEL:INFO} 
+
+
+

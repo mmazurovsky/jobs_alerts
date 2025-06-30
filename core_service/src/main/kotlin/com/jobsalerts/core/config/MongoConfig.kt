@@ -11,7 +11,10 @@ import org.springframework.data.mongodb.MongoDatabaseFactory
 import org.springframework.data.mongodb.config.AbstractMongoClientConfiguration
 import org.springframework.data.mongodb.core.MongoTemplate
 import org.springframework.data.mongodb.core.SimpleMongoClientDatabaseFactory
+import org.springframework.data.mongodb.core.convert.DefaultMongoTypeMapper
+import org.springframework.data.mongodb.core.convert.MappingMongoConverter
 import org.springframework.data.mongodb.core.convert.MongoCustomConversions
+import org.springframework.data.mongodb.core.mapping.MongoMappingContext
 import org.springframework.data.mongodb.repository.config.EnableMongoRepositories
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
@@ -19,9 +22,21 @@ import java.util.*
 
 @Configuration
 @EnableMongoRepositories(basePackages = ["com.jobsalerts.core.repository"])
-class MongoConfig(
+class MongoConfig {
 
-)  {
+    @Bean
+    fun mappingMongoConverter(
+        databaseFactory: MongoDatabaseFactory,
+        customConversions: MongoCustomConversions,
+        mappingContext: MongoMappingContext
+    ): MappingMongoConverter {
+        val converter = MappingMongoConverter(databaseFactory, mappingContext)
+        converter.setCustomConversions(customConversions)
+        // Remove the _class field from documents
+        converter.setTypeMapper(DefaultMongoTypeMapper(null))
+        return converter
+    }
+
     @Bean
     fun mongoCustomConversions(): MongoCustomConversions {
         return MongoCustomConversions(
