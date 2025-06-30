@@ -37,30 +37,26 @@ class AlertCreationService(
         logger.info { "AlertCreationService cleanup completed" }
     }
 
-    private suspend fun handleEvent(event: FromTelegramEvent) {
+    internal suspend fun handleEvent(event: FromTelegramEvent) {
         if (event is TelegramMessageReceived) {
             val initialDescription = event.commandParameters?.trim()
             // Only handle CreateAlert contexts or /create_alert command
             val currentContext = sessionManager.getCurrentContext(event.userId)
             when {
+                event.commandName == "/cancel" && currentContext is CreateAlertSubContext -> {
+                    sendMessage(event.chatId, "❌ Alert creation cancelled.")
+                    sessionManager.resetToIdle(event.userId)
+                }
                 event.commandName == "/create_alert" && initialDescription.isNullOrEmpty() -> {
                     sessionManager.setContext(event.userId, CreateAlertSubContext.Initial)
-                    try {
-                        processInitial(event)
-                    }
+                    processInitial(event)
                 }
                 (event.commandName == "/create_alert" && !initialDescription.isNullOrEmpty()) || currentContext is CreateAlertSubContext.CollectingDescription -> {
                     sessionManager.setContext(event.userId, CreateAlertSubContext.CollectingDescription)
-                    try {
-                        processAlertDescription(event.chatId, event.userId, event.text)
-                    }
+                    processAlertDescription(event.chatId, event.userId, event.text)
                 }
                 currentContext is CreateAlertSubContext.ConfirmingDetails -> {
-                    processConfirmation(event.chatId, event.userId, event.userName, event.text)
-                }
-                event.commandName == "/cancel" && currentContext is CreateAlertSubContext -> {
-                    sendMessage(event.userId, "❌ Alert creation cancelled.")
-                    sessionManager.resetToIdle(event.userId)
+                    processConfirmation(event.chatId, event.userId, event.username, event.text)
                 }
             }
         }

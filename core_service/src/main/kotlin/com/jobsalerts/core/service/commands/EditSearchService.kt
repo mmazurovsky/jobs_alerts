@@ -92,7 +92,7 @@ class EditSearchService(
 
     private suspend fun processInitialEdit(chatId: Long, userId: Long) {
         try {
-            val userSearches = jobSearchService.getUserSearches(userId.toInt())
+            val userSearches = jobSearchService.getUserSearches(userId)
             
             if (userSearches.isEmpty()) {
                 val message = """
@@ -155,7 +155,7 @@ class EditSearchService(
     private suspend fun processAlertIdProvided(chatId: Long, userId: Long, alertId: String) {
         try {
             // Validate that the alert exists and belongs to the user
-            val userSearches = jobSearchService.getUserSearches(userId.toInt())
+            val userSearches = jobSearchService.getUserSearches(userId)
             val existingAlert = userSearches.find { it.id == alertId }
             
             if (existingAlert == null) {

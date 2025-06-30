@@ -13,8 +13,8 @@ class JobSearchService(
 ) : Logging {
     
 
-        
-    fun getUserSearches(userId: Int): List<JobSearchOut> {
+    
+    fun getUserSearches(userId: Long): List<JobSearchOut> {
         return jobSearchRepository.findByUserId(userId)
     }
     

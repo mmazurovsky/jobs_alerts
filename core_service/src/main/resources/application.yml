@@ -31,26 +31,6 @@ management:
     readinessstate:
       enabled: true
 
-telegram:
-  bot:
-    token: ${TELEGRAM_BOT_TOKEN}
-    username: ${TELEGRAM_BOT_USERNAME}
-
-admin:
-  user:
-    id: ${ADMIN_USER_ID}
-
-deepseek:
-  api:
-    key: ${DEEPSEEK_API_KEY}
-
-callback:
-  url: ${CALLBACK_URL:http://localhost:8080}
-
-scraper:
-  service:
-    url: ${SCRAPER_SERVICE_URL:http://localhost:8000}
-
 logging:
   config: classpath:log4j2.xml
   level:

@@ -1,17 +1,17 @@
 package com.jobsalerts.core.service
 
-import com.jobsalerts.core.config.CallbackConfig
 import com.jobsalerts.core.domain.model.JobSearchOut
 import com.jobsalerts.core.domain.model.SearchJobsParams
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import org.apache.logging.log4j.kotlin.Logging
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 
 @Service
 class ScraperJobService(
         private val scraperClient: ScraperClient,
-        private val callbackConfig: CallbackConfig
+        @Value("\${CALLBACK_URL}") private val callbackUrl: String,
 ) : Logging {
 
     private val semaphore = Semaphore(4) // Limit to 4 concurrent jobs like main_project
@@ -19,7 +19,7 @@ class ScraperJobService(
     suspend fun triggerScraperJobAndLog(jobSearch: JobSearchOut) {
         semaphore.withPermit {
             // Build callback URL
-            val callbackUrl = callbackConfig.url.trimEnd('/') + "/api/job-results-callback"
+            val callbackUrl = callbackUrl.trimEnd('/') + "/api/job-results-callback"
 
             val params =
                     SearchJobsParams(

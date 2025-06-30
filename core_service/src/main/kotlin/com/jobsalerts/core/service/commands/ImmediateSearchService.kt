@@ -67,7 +67,7 @@ class ImmediateSearchService(
 
                 // We already parsed and are waiting for confirmation
                 currentContext is SearchNowSubContext.ConfirmingDetails -> {
-                    processConfirmation(event.chatId, event.userId, event.userName, event.text)
+                    processConfirmation(event.chatId, event.userId, event.username, event.text)
                 }
 
                 // User cancelled

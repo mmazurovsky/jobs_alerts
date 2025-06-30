@@ -2,10 +2,10 @@ package com.jobsalerts.core.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.jobsalerts.core.config.DeepSeekConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.apache.logging.log4j.kotlin.Logging
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import java.net.URI
 import java.net.http.HttpClient
@@ -29,8 +29,11 @@ data class DeepSeekResponse(
 
 @Service
 class DeepSeekClient(
-    private val deepSeekConfig: DeepSeekConfig
-) : Logging {
+
+
+    @Value("\${DEEPSEEK_API_KEY}")     private    val deepseekApiKey: String,
+
+    ) : Logging {
 
     private val httpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(30))
@@ -41,7 +44,7 @@ class DeepSeekClient(
     suspend fun chat(request: DeepSeekRequest): DeepSeekResponse {
         return withContext(Dispatchers.IO) {
             try {
-                if (deepSeekConfig.key.isNullOrBlank()) {
+                if (deepseekApiKey.isNullOrBlank()) {
                     return@withContext DeepSeekResponse(
                         success = false,
                         errorMessage = "DeepSeek API key not configured"
@@ -87,7 +90,7 @@ class DeepSeekClient(
         val httpRequest = HttpRequest.newBuilder()
             .uri(URI.create("https://api.deepseek.com/chat/completions"))
             .header("Content-Type", "application/json")
-            .header("Authorization", "Bearer ${deepSeekConfig.key}")
+            .header("Authorization", "Bearer ${deepseekApiKey}")
             .POST(HttpRequest.BodyPublishers.ofString(requestBody))
             .build()
 
@@ -100,6 +103,6 @@ class DeepSeekClient(
     }
 
     fun isAvailable(): Boolean {
-        return !deepSeekConfig.key.isNullOrBlank()
+        return !deepseekApiKey.isNullOrBlank()
     }
 } 

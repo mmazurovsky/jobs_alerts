@@ -32,7 +32,7 @@ sealed class FromTelegramEvent(
 data class TelegramMessageReceived(
         override val message: String,
         val text: String,
-        val userName: String?,
+        val username: String?,
         override val userId: Long,
         val chatId: Long,
         val commandName: String? = null,

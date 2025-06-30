@@ -61,7 +61,7 @@ class ListSearchesService(
 
     private suspend fun processListRequest(chatId: Long, userId: Long) {
         try {
-            val userSearches = jobSearchService.getUserSearches(userId.toInt())
+            val userSearches = jobSearchService.getUserSearches(userId)
             
             if (userSearches.isEmpty()) {
                 val message = """

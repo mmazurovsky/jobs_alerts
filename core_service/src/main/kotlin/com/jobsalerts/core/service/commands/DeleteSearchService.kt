@@ -84,7 +84,7 @@ class DeleteSearchService(
 
     private suspend fun processInitialDelete(chatId: Long, userId: Long) {
         try {
-            val userSearches = jobSearchService.getUserSearches(userId.toInt())
+            val userSearches = jobSearchService.getUserSearches(userId)
             
             if (userSearches.isEmpty()) {
                 val message = """
@@ -151,7 +151,7 @@ class DeleteSearchService(
             val alertIdList = alertIds.split(",").map { it.trim() }.filter { it.isNotBlank() }
             
             // Validate that all alert IDs exist and belong to the user
-            val userSearches = jobSearchService.getUserSearches(userId.toInt())
+            val userSearches = jobSearchService.getUserSearches(userId)
             val validAlertIds = mutableListOf<String>()
             val invalidAlertIds = mutableListOf<String>()
             

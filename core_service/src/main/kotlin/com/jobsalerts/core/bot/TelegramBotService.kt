@@ -28,7 +28,7 @@ class TelegramBotService(
     private val fromTelegramEventBus: FromTelegramEventBus,
     private val toTelegramEventBus: ToTelegramEventBus,
     private val sessionManager: SessionManager
-) : TelegramLongPollingBot(botToken), Logging, MessageSender {
+) : TelegramLongPollingBot(botToken), Logging {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var outboundSubscription: Job? = null
@@ -79,7 +79,7 @@ class TelegramBotService(
                             val telegramEvent = TelegramMessageReceived(
                                 message = message.text,
                                 text = message.text,
-                                userName = username,
+                                username = username,
                                 userId = userId,
                                 chatId = chatId,
                                 commandName = commandName,
@@ -99,7 +99,7 @@ class TelegramBotService(
 
 
     // Implementation of MessageSender interface
-    override suspend fun sendMessage(chatId: Long, message: String) {
+    suspend fun sendMessage(chatId: Long, message: String) {
         sendMessageWithSplitting(chatId, message)
     }
 

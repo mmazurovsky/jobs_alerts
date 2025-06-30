@@ -1,6 +1,5 @@
 package com.jobsalerts.core.service
 
-import com.jobsalerts.core.config.ScraperConfig
 import com.jobsalerts.core.domain.model.SearchJobsParams
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
@@ -10,6 +9,7 @@ import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.serialization.jackson.*
 import org.apache.logging.log4j.kotlin.Logging
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 
 
@@ -21,7 +21,8 @@ data class ScraperResponse(
 
 @Service
 class ScraperClient(
-    private val scraperConfig: ScraperConfig
+
+    @Value("\${SCRAPER_SERVICE_URL}")     private val scraperServiceUrl: String,
 ) : Logging {
     private val client = HttpClient(CIO) {
         install(ContentNegotiation) {
@@ -31,7 +32,7 @@ class ScraperClient(
     
     suspend fun scrapeJobs(params: SearchJobsParams): ScraperResponse {
         return try {
-            val response = client.post("${scraperConfig.url}/search_jobs") {
+            val response = client.post("${scraperServiceUrl}/search_jobs") {
                 contentType(ContentType.Application.Json)
                 setBody(params)
             }
@@ -53,7 +54,7 @@ class ScraperClient(
     
     suspend fun checkHealth(): Map<String, Any> {
         return try {
-            val response = client.get("${scraperConfig.url}/health")
+            val response = client.get("${scraperServiceUrl}/health")
             
             if (response.status.value in 200..299) {
                 mapOf("status" to "healthy", "message" to "Scraper service is running")
@@ -68,7 +69,7 @@ class ScraperClient(
     
     suspend fun checkProxyConnection(): Map<String, Any> {
         return try {
-            val response = client.get("${scraperConfig.url}/check_proxy_connection")
+            val response = client.get("${scraperServiceUrl}/check_proxy_connection")
             
             if (response.status.value in 200..299) {
                 mapOf("success" to true, "message" to "Proxy connection successful")
