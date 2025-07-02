@@ -29,6 +29,21 @@ class ApplicationStartupListener(
                 logger.warn(e) { "Scraper service health check failed - service may not be available" }
             }
             
+            // Check proxy connection through scraper service
+            try {
+                val proxyCheck = scraperClient.checkProxyConnection()
+                logger.info { "Proxy connection check: $proxyCheck" }
+                
+                val isProxyWorking = proxyCheck["success"] as? Boolean ?: false
+                if (isProxyWorking) {
+                    logger.info { "✅ Proxy connection is working properly" }
+                } else {
+                    logger.warn { "⚠️ Proxy connection failed: ${proxyCheck["message"]}" }
+                }
+            } catch (e: Exception) {
+                logger.error(e) { "❌ Error checking proxy connection - scraper service may not be available" }
+            }
+            
             // Initialize job search service
             jobSearchService.initialize()
             

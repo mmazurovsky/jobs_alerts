@@ -8,7 +8,7 @@ import java.util.concurrent.ConcurrentHashMap
 interface UserSessionManager {
     fun getSession(userId: Long, chatId: Long, username: String?): UserSession
     fun updateSession(userId: Long, update: (UserSession) -> UserSession)
-    fun setContext(userId: Long, context: CommandContext)
+    fun setContext(chatId: Long, userId: Long, context: CommandContext)
     fun resetToIdle(userId: Long)
     fun isInContext(userId: Long, contextType: Class<out CommandContext>): Boolean
     fun getCurrentContext(userId: Long): CommandContext
@@ -36,18 +36,34 @@ class SessionManager : UserSessionManager, Logging {
         }
     }
     
-    override fun setContext(userId: Long, context: CommandContext) {
-        logger.debug { "Setting context for user $userId to: $context" }
-        updateSession(userId) { session ->
-            session.copy(
-                previousContext = session.context,
-                context = context
-            )
+    override fun setContext(chatId: Long, userId: Long, context: CommandContext) {
+        val previousContext = getCurrentContext(userId)
+        logger.info { "📋 SessionManager: Setting context for user $userId from '$previousContext' to '$context'" }
+        
+        // Ensure session exists or create it, similar to getSession
+        userSessions.compute(userId) { _, existingSession ->
+            if (existingSession != null) {
+                existingSession.copy(
+                    previousContext = existingSession.context,
+                    context = context,
+                    updatedAt = System.currentTimeMillis()
+                )
+            } else {
+                logger.info { "📋 SessionManager: Creating new session for user $userId with context $context" }
+                UserSession(
+                    userId = userId,
+                    chatId = chatId, 
+                    context = context
+                )
+            }
         }
+        
+        logger.info { "📋 SessionManager: Context successfully set for user $userId to '$context'" }
     }
         
     override fun resetToIdle(userId: Long) {
-        logger.debug { "Resetting user $userId to idle context" }
+        val previousContext = getCurrentContext(userId)
+        logger.info { "📋 SessionManager: Resetting user $userId from '$previousContext' to idle context" }
         updateSession(userId) { session ->
             session.copy(
                 context = IdleCommandContext,
@@ -57,6 +73,7 @@ class SessionManager : UserSessionManager, Logging {
                 previousContext = session.context
             )
         }
+        logger.info { "📋 SessionManager: User $userId successfully reset to idle context" }
     }
     
     override fun isInContext(userId: Long, contextType: Class<out CommandContext>): Boolean {

@@ -41,7 +41,7 @@ class ListSearchesService(
             
             when {
                 event.commandName == "/list_alerts" -> {
-                    sessionManager.setContext(event.userId, ListAlertsSubContext.ViewingList)
+                    sessionManager.setContext(chatId = event.chatId, userId = event.userId, context = ListAlertsSubContext.ViewingList)
                     try {
                         processListRequest(event.chatId, event.userId)
                     } catch (e: Exception) {

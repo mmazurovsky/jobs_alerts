@@ -35,17 +35,13 @@ class StartService(
     }
 
     private suspend fun handleEvent(event: FromTelegramEvent) {
-        logger.info { "🎯 StartService: RECEIVED EVENT: $event" }
-        
         if (event is TelegramMessageReceived) {
-            logger.info { "📨 StartService: Processing TelegramMessageReceived - commandName='${event.commandName}', userId=${event.userId}" }
             val currentContext = sessionManager.getCurrentContext(event.userId)
-            logger.info { "🔄 StartService: Current user context: $currentContext" }
             
             when {
                 event.commandName == "/start" -> {
                     logger.info { "🚀 StartService: Processing /start command for user ${event.userId}" }
-                    sessionManager.setContext(event.userId, StartSubContext.ShowingWelcome)
+                    sessionManager.setContext(chatId = event.chatId, userId = event.userId, context = StartSubContext.ShowingWelcome)
                     try {
                         processStartRequest(event.chatId, event.userId)
                         logger.info { "✅ StartService: Successfully processed /start command" }
@@ -58,7 +54,7 @@ class StartService(
                 
                 event.commandName == "/menu" -> {
                     logger.info { "📋 StartService: Processing /menu command for user ${event.userId}" }
-                    sessionManager.setContext(event.userId, StartSubContext.ShowingWelcome)
+                    sessionManager.setContext(chatId = event.chatId, userId = event.userId, context = StartSubContext.ShowingWelcome)
                     try {
                         processMenuRequest(event.chatId, event.userId)
                         logger.info { "✅ StartService: Successfully processed /menu command" }
@@ -75,12 +71,12 @@ class StartService(
                     sessionManager.resetToIdle(event.userId)
                 }
                 
-                else -> {
-                    logger.debug { "🔇 StartService: Ignoring event - commandName='${event.commandName}', currentContext=$currentContext" }
+                // Only log if this service should handle the event
+                event.commandName in listOf("/start", "/menu") || 
+                (event.commandName == "/cancel" && currentContext is StartSubContext) -> {
+                    logger.debug { "🔇 StartService: Handled relevant event but no action taken" }
                 }
             }
-        } else {
-            logger.debug { "🔇 StartService: Ignoring non-TelegramMessageReceived event: $event" }
         }
     }
 

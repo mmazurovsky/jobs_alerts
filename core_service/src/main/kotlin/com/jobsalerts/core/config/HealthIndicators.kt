@@ -25,32 +25,3 @@ class MongoHealthIndicator(
         }
     }
 }
-
-@Component("scraperService")
-class ScraperServiceHealthIndicator(
-    private val scraperClient: ScraperClient
-) : HealthIndicator {
-    
-    override fun health(): Health {
-        return try {
-            val result = runBlocking {
-                scraperClient.checkProxyConnection()
-            }
-            
-            if (result["success"] == true) {
-                Health.up()
-                    .withDetail("message", result["message"])
-                    .build()
-            } else {
-                Health.down()
-                    .withDetail("message", result["message"])
-                    .build()
-            }
-        } catch (e: Exception) {
-            Health.down()
-                .withException(e)
-                .withDetail("message", "Unable to connect to scraper service")
-                .build()
-        }
-    }
-} 

@@ -50,39 +50,40 @@ class JobSearchParserService(
     }
 
     private fun buildPrompt(userInput: String): String {
-        val formattingInstructions = JobSearchIn.getFormattingInstructions()
-        
         return """
-            You are a job search assistant. Parse the following user input into a structured job search request.
-            
-            User Input: "$userInput"
-            
-            Context - Here's what users are told about how to format their requests:
-            $formattingInstructions
-            
-            Based on this context, extract the information and return ONLY a valid JSON object with this exact structure:
-            {
-                "jobTitle": "extracted job title",
-                "location": "extracted location", 
-                "jobTypes": ["list of job types from: ${JobType.getAllLabels().joinToString(", ")}"],
-                "remoteTypes": ["list of remote types from: ${RemoteType.getAllLabels().joinToString(", ")}"],
-                "filterText": "what user wants or doesn't want: salary requirements, companies to include/avoid, communication language, technologies to use/avoid, job description filters, experience level, benefits required"
-            }
-            
-            Rules:
-            - jobTitle and location are REQUIRED
-            - If jobTypes not specified, use ["${JobType.getDefault().label}"]
-            - If remoteTypes not specified, use ["${RemoteType.getDefault().label}"]
-            - filterText is optional, can be null
-            - Use exact label values from the provided lists
-            - Return ONLY the JSON object, no explanations
-            
-            Examples:
-            Input: "Senior Software Engineer in San Francisco, full-time remote, $150k+, no on-call"
-            Output: {"jobTitle": "Senior Software Engineer", "location": "San Francisco", "jobTypes": ["Full-time"], "remoteTypes": ["Remote"], "filterText": "$150k+, no on-call"}
-            
+        Parse the following job search description into JSON format. Extract all relevant job search criteria.
+
+        Required fields:
+        - jobTitle: string (the job position/role)
+        - location: string (where the user wants to work)
+
+        Optional fields:
+        - jobTypes: array of strings (employment types like "Full-time", "Part-time", "Contract", "Temporary", "Internship")
+        - remoteTypes: array of strings (work arrangements like "Remote", "On-site", "Hybrid") 
+        - timePeriod: string (frequency for alerts like "1 hour", "4 hours", "24 hours", "1 week", "1 month")
+        - filterText: string (additional requirements, exclusions, salary, technologies, etc.)
+
+        Available job types: ${JobType.getAllLabels().joinToString(", ")}
+        Available remote types: ${RemoteType.getAllLabels().joinToString(", ")}
+        Available time periods: ${TimePeriod.getAllLabels().joinToString(", ")}
+
+        Rules:
+        1. Only include timePeriod if the user explicitly mentions frequency (e.g., "hourly", "daily", "weekly", "every hour", "check every day")
+        2. Put salary requirements, technology preferences, company preferences, and other requirements in filterText
+        3. Return only valid JSON, no explanations
+        4. Use exact values from the available options listed above
+
+        User input: "$userInput"
+
+        Examples:
+            Input: "Senior Software Engineer in San Francisco, full-time, remote, check hourly"
+            Output: {"jobTitle": "Senior Software Engineer", "location": "San Francisco", "jobTypes": ["Full-time"], "remoteTypes": ["Remote"], "timePeriod": "1 hour"}
+
             Input: "Data Scientist role in Berlin, contract work, English speaking, avoid startups"
             Output: {"jobTitle": "Data Scientist", "location": "Berlin", "jobTypes": ["Contract"], "remoteTypes": ["Remote"], "filterText": "English speaking, avoid startups"}
+            
+            Input: "Product Manager in NYC, search weekly, no travel"
+            Output: {"jobTitle": "Product Manager", "location": "NYC", "timePeriod": "1 week", "filterText": "no travel"}
         """.trimIndent()
     }
 
@@ -101,6 +102,7 @@ class JobSearchParserService(
             val location = parsedData["location"] as? String
             val jobTypeLabels = parsedData["jobTypes"] as? List<*>
             val remoteTypeLabels = parsedData["remoteTypes"] as? List<*>
+            val timePeriodName = parsedData["timePeriod"] as? String
             val filterText = parsedData["filterText"] as? String
 
             // Validate required fields
@@ -126,12 +128,17 @@ class JobSearchParserService(
                 RemoteType.fromLabel(label.toString())
             }?.takeIf { it.isNotEmpty() } ?: listOf(RemoteType.getDefault())
 
+            // Parse time period with robust fallback
+            val timePeriod = parseTimePeriodFromResponse(timePeriodName)
+            
+            logger.debug { "Parsed timePeriod: $timePeriod from input: '$timePeriodName'" }
+
             val jobSearchIn = JobSearchIn(
                 jobTitle = jobTitle!!,
                 location = location!!,
                 jobTypes = jobTypes,
                 remoteTypes = remoteTypes,
-                timePeriod = TimePeriod.getOneTimeSearchPeriod(),
+                timePeriod = timePeriod,
                 userId = userId,
                 filterText = if (filterText.isNullOrBlank()) null else filterText
             )
@@ -173,5 +180,53 @@ class JobSearchParserService(
                     "Job Type: [Full-time/Part-time/Contract/etc.]\n" +
                     "Remote: [Remote/On-site/Hybrid]"
         )
+    }
+    
+    /**
+     * Parses time period from LLM response with robust fallback logic
+     */
+    private fun parseTimePeriodFromResponse(timePeriodName: String?): TimePeriod {
+        if (timePeriodName.isNullOrBlank()) {
+            logger.debug { "No timePeriod specified, using default: ${TimePeriod.getDefault().displayName}" }
+            return TimePeriod.getDefault()
+        }
+        
+        // Try exact match first
+        TimePeriod.fromDisplayName(timePeriodName)?.let { 
+            logger.debug { "Found exact match for timePeriod: $timePeriodName -> ${it.displayName}" }
+            return it 
+        }
+        
+        // Try case-insensitive match
+        TimePeriod.values().find { 
+            it.displayName.equals(timePeriodName, ignoreCase = true) 
+        }?.let { 
+            logger.debug { "Found case-insensitive match for timePeriod: $timePeriodName -> ${it.displayName}" }
+            return it 
+        }
+        
+        // Try partial matches for common user input variations
+        val lowerInput = timePeriodName.lowercase().trim()
+        val match = when {
+            lowerInput.contains("5 min") || lowerInput.contains("5min") -> TimePeriod.`5 minutes`
+            lowerInput.contains("10 min") || lowerInput.contains("10min") -> TimePeriod.`10 minutes`
+            lowerInput.contains("15 min") || lowerInput.contains("15min") -> TimePeriod.`15 minutes`
+            lowerInput.contains("20 min") || lowerInput.contains("20min") -> TimePeriod.`20 minutes`
+            lowerInput.contains("30 min") || lowerInput.contains("30min") -> TimePeriod.`30 minutes`
+            lowerInput.contains("1 hour") || lowerInput.contains("hour") && lowerInput.contains("1") -> TimePeriod.`1 hour`
+            lowerInput.contains("4 hour") || lowerInput.contains("4hour") -> TimePeriod.`4 hours`
+            lowerInput.contains("24 hour") || lowerInput.contains("daily") || lowerInput.contains("day") -> TimePeriod.`24 hours`
+            lowerInput.contains("1 week") || lowerInput.contains("week") -> TimePeriod.`1 week`
+            lowerInput.contains("1 month") || lowerInput.contains("month") -> TimePeriod.`1 month`
+            else -> null
+        }
+        
+        if (match != null) {
+            logger.debug { "Found partial match for timePeriod: $timePeriodName -> ${match.displayName}" }
+            return match
+        }
+        
+        logger.warn { "Could not parse timePeriod: '$timePeriodName', using default: ${TimePeriod.getDefault().displayName}" }
+        return TimePeriod.getDefault()
     }
 } 

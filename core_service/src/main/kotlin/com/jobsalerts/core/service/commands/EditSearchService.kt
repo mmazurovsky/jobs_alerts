@@ -45,8 +45,10 @@ class EditSearchService(
             val alertId = event.commandParameters?.trim()
             
             when {
+                // Handle /edit_alert commands
                 event.commandName == "/edit_alert" && alertId.isNullOrEmpty() -> {
-                    sessionManager.setContext(event.userId, EditAlertSubContext.SelectingAlert)
+                    logger.info { "✏️ EditSearchService: Processing /edit_alert command (no parameters)" }
+                    sessionManager.setContext(chatId = event.chatId, userId = event.userId, context = EditAlertSubContext.SelectingAlert)
                     try {
                         processInitialEdit(event.chatId, event.userId)
                     } catch (e: Exception) {
@@ -57,7 +59,8 @@ class EditSearchService(
                 }
                 
                 event.commandName == "/edit_alert" && !alertId.isNullOrEmpty() -> {
-                    sessionManager.setContext(event.userId, EditAlertSubContext.CollectingChanges)
+                    logger.info { "✏️ EditSearchService: Processing /edit_alert command with parameters: $alertId" }
+                    sessionManager.setContext(chatId = event.chatId, userId = event.userId, context = EditAlertSubContext.CollectingChanges)
                     sessionManager.updateSession(event.userId) { session ->
                         session.copy(selectedAlertId = alertId)
                     }
@@ -70,21 +73,26 @@ class EditSearchService(
                     }
                 }
                 
-                currentContext is EditAlertSubContext.SelectingAlert -> {
+                event.commandName == "/cancel" && currentContext is EditAlertSubContext -> {
+                    logger.info { "✏️ EditSearchService: Processing /cancel command" }
+                    sendMessage(event.chatId, "❌ Edit operation cancelled.")
+                    sessionManager.resetToIdle(event.userId)
+                }
+                
+                // Handle context-based plain text messages
+                event.commandName == null && currentContext is EditAlertSubContext.SelectingAlert -> {
+                    logger.info { "✏️ EditSearchService: Handling alert selection in context: '${event.text}'" }
                     processAlertIdSelection(event.chatId, event.userId, event.text)
                 }
                 
-                currentContext is EditAlertSubContext.CollectingChanges -> {
+                event.commandName == null && currentContext is EditAlertSubContext.CollectingChanges -> {
+                    logger.info { "✏️ EditSearchService: Handling job search changes in context: '${event.text}'" }
                     processJobSearchChanges(event.chatId, event.userId, event.text)
                 }
                 
-                currentContext is EditAlertSubContext.ConfirmingChanges -> {
+                event.commandName == null && currentContext is EditAlertSubContext.ConfirmingChanges -> {
+                    logger.info { "✏️ EditSearchService: Handling confirmation in context: '${event.text}'" }
                     processConfirmation(event.chatId, event.userId, event.text)
-                }
-                
-                event.commandName == "/cancel" && currentContext is EditAlertSubContext -> {
-                    sendMessage(event.chatId, "❌ Edit operation cancelled.")
-                    sessionManager.resetToIdle(event.userId)
                 }
             }
         }
@@ -147,7 +155,7 @@ class EditSearchService(
         sessionManager.updateSession(userId) { session ->
             session.copy(selectedAlertId = alertId)
         }
-        sessionManager.setContext(userId, EditAlertSubContext.CollectingChanges)
+        sessionManager.setContext(chatId = chatId, userId = userId, context = EditAlertSubContext.CollectingChanges)
         
         processAlertIdProvided(chatId, userId, alertId)
     }
@@ -167,7 +175,7 @@ class EditSearchService(
                     appendLine("Please provide a valid alert ID or use /list_alerts to see your alerts.")
                 }
                 sendMessage(chatId, message.toString())
-                sessionManager.setContext(userId, EditAlertSubContext.SelectingAlert)
+                sessionManager.setContext(chatId = chatId, userId = userId, context = EditAlertSubContext.SelectingAlert)
                 return
             }
             
@@ -225,7 +233,7 @@ class EditSearchService(
                 sessionManager.updateSession(userId) { session ->
                     session.copy(pendingJobSearch = parseResult.jobSearchIn, retryCount = 0)
                 }
-                sessionManager.setContext(userId, EditAlertSubContext.ConfirmingChanges)
+                sessionManager.setContext(chatId = chatId, userId = userId, context = EditAlertSubContext.ConfirmingChanges)
                 
                 sendMessage(chatId, confirmationMessage)
             } else {
@@ -297,7 +305,7 @@ class EditSearchService(
                 }
                 
                 sendMessage(chatId, retryMessage.toString())
-                sessionManager.setContext(userId, EditAlertSubContext.CollectingChanges)
+                sessionManager.setContext(chatId = chatId, userId = userId, context = EditAlertSubContext.CollectingChanges)
             }
             
             else -> {

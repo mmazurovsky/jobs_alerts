@@ -75,21 +75,19 @@ data class JobSearchIn(
                 appendLine("  - Available options: ${RemoteType.getAllLabels().joinToString(", ")}")
                 appendLine("  - Default if not specified: ${RemoteType.getDefault().label}")
                 appendLine()
-                appendLine("• **Filter Text** - What you want or DON'T want in your job:")
-                appendLine("  - **Salary requirements:** '\$100k+', 'above \$80k', 'competitive salary', 'equity'")
-                appendLine("  - **Companies to include/avoid:** 'Google', 'no startups', 'Fortune 500 only', 'avoid consulting'")
-                appendLine("  - **Communication language:** 'English only', 'German speaking', 'bilingual preferred'")
-                appendLine("  - **Technologies to use/avoid:** 'Python required', 'no PHP', 'React', 'avoid legacy systems'")
-                appendLine("  - **Job description filters:** 'no travel required', 'no on-call', 'flexible hours', 'no weekend work'")
-                appendLine("  - **Experience level:** 'Senior level', '5+ years', 'no junior roles', 'leadership opportunities'")
-                appendLine("  - **Benefits required:** 'health insurance', 'visa sponsorship', 'stock options', 'remote work'")
+                appendLine("• **Alert Frequency** - How often to search for jobs:")
+                appendLine("  - Recommended options: ${TimePeriod.getRecommendedLabels().joinToString(", ")}")
+                appendLine("  - Default if not specified: ${TimePeriod.getDefault().displayName}")
                 appendLine()
-                appendLine("**Examples:**")
-                getExamples().forEachIndexed { index, example ->
-                    appendLine("${index + 1}. \"$example\"")
+                appendLine("• **Filter Text** - Additional requirements or exclusions")
+                appendLine("  Examples: 'no on-call', 'without requirement to speak German', 'visa sponsorship', 'avoid startups'")
+                appendLine()
+                appendLine("**Example Descriptions:**")
+                getExamples().forEach { example ->
+                    appendLine("• \"$example\"")
                 }
                 appendLine()
-                appendLine("💬 **Just describe what you're looking for, and I'll help you refine it!**")
+                appendLine("Feel free to describe your requirements in natural language - I'll help parse the details!")
             }
         }
 

@@ -43,9 +43,10 @@ class ImmediateSearchService(
             val currentContext = sessionManager.getCurrentContext(event.userId)
 
             when {
-                // User sent /search_now without parameters -> start flow, show instructions
+                // Handle /search_now commands
                 event.commandName == "/search_now" && initialDescription.isNullOrEmpty() -> {
-                    sessionManager.setContext(event.userId, SearchNowSubContext.Initial)
+                    logger.info { "🔍 ImmediateSearchService: Processing /search_now command (no parameters)" }
+                    sessionManager.setContext(chatId = event.chatId, userId = event.userId, context = SearchNowSubContext.Initial)
                     try {
                         processInitial(event)
                     } catch (e: Exception) {
@@ -53,27 +54,31 @@ class ImmediateSearchService(
                     }
                 }
 
-                // User sent /search_now with a description OR we are in CollectingDescription context
-                (event.commandName == "/search_now" && !initialDescription.isNullOrEmpty()) ||
-                        currentContext is SearchNowSubContext.CollectingDescription -> {
-                    sessionManager.setContext(event.userId, SearchNowSubContext.CollectingDescription)
-                    val descriptionToUse = if (!initialDescription.isNullOrEmpty()) initialDescription else event.text
+                event.commandName == "/search_now" && !initialDescription.isNullOrEmpty() -> {
+                    logger.info { "🔍 ImmediateSearchService: Processing /search_now command with parameters: $initialDescription" }
+                    sessionManager.setContext(chatId = event.chatId, userId = event.userId, context = SearchNowSubContext.CollectingDescription)
                     try {
-                        processJobSearchDescription(event.chatId, event.userId, descriptionToUse)
+                        processJobSearchDescription(event.chatId, event.userId, initialDescription)
                     } catch (e: Exception) {
                         logger.error(e) { "Error processing job search description for user ${event.userId}" }
                     }
                 }
 
-                // We already parsed and are waiting for confirmation
-                currentContext is SearchNowSubContext.ConfirmingDetails -> {
-                    processConfirmation(event.chatId, event.userId, event.username, event.text)
-                }
-
-                // User cancelled
                 event.commandName == "/cancel" && currentContext is SearchNowSubContext -> {
+                    logger.info { "🔍 ImmediateSearchService: Processing /cancel command" }
                     sendMessage(event.chatId, "❌ Immediate search cancelled.")
                     sessionManager.resetToIdle(event.userId)
+                }
+                
+                // Handle context-based plain text messages
+                event.commandName == null && currentContext is SearchNowSubContext.CollectingDescription -> {
+                    logger.info { "🔍 ImmediateSearchService: Handling description collection in context: '${event.text}'" }
+                    processJobSearchDescription(event.chatId, event.userId, event.text)
+                }
+                
+                event.commandName == null && currentContext is SearchNowSubContext.ConfirmingDetails -> {
+                    logger.info { "🔍 ImmediateSearchService: Handling confirmation in context: '${event.text}'" }
+                    processConfirmation(event.chatId, event.userId, event.username, event.text)
                 }
             }
         }
@@ -89,7 +94,7 @@ class ImmediateSearchService(
         }
   
         sendMessage(event.chatId, instructionsMessage)
-        sessionManager.setContext(event.userId, SearchNowSubContext.CollectingDescription)
+        sessionManager.setContext(chatId = event.chatId, userId = event.userId, context = SearchNowSubContext.CollectingDescription)
     }
 
     private suspend fun sendMessage(chatId: Long, message: String) {
@@ -132,7 +137,9 @@ class ImmediateSearchService(
                 val confirmationMessage = buildString {
                     appendLine("✅ **Job search parsed successfully!**")
                     appendLine()
-                    append(parseResult.jobSearchIn.toHumanReadableString())
+                    // Override timePeriod for immediate searches
+                    val immediateJobSearch = parseResult.jobSearchIn.copy(timePeriod = TimePeriod.getOneTimeSearchPeriod())
+                    append(immediateJobSearch.toHumanReadableString())
                     appendLine()
                     appendLine("**Is this correct?**")
                     appendLine("• Reply '**yes**' to proceed with the search")
@@ -142,11 +149,11 @@ class ImmediateSearchService(
                 
                 sessionManager.updateSession(userId) { session ->
                     session.copy(
-                        pendingJobSearch = parseResult.jobSearchIn,
+                        pendingJobSearch = parseResult.jobSearchIn.copy(timePeriod = TimePeriod.getOneTimeSearchPeriod()),
                         retryCount = 0
                     )
                 }
-                sessionManager.setContext(userId, SearchNowSubContext.ConfirmingDetails)
+                sessionManager.setContext(chatId = chatId, userId = userId, context = SearchNowSubContext.ConfirmingDetails)
                 
                 sendMessage(chatId, confirmationMessage)
             } else {
@@ -212,7 +219,7 @@ class ImmediateSearchService(
                     append(JobSearchIn.getFormattingInstructions())
                 }
                 
-                sessionManager.setContext(userId, SearchNowSubContext.CollectingDescription)
+                sessionManager.setContext(chatId = chatId, userId = userId, context = SearchNowSubContext.CollectingDescription)
                 sessionManager.updateSession(userId) { session ->
                     session.copy(
                         pendingJobSearch = null,
@@ -282,4 +289,4 @@ class ImmediateSearchService(
             sendMessage(chatId, errorMessage)
         }
     }
-} 
+}  

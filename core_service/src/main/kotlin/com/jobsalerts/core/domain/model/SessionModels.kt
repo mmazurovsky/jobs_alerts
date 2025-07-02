@@ -53,7 +53,7 @@ sealed class StartSubContext : CommandContext {
 data class UserSession(
     val userId: Long,
     val chatId: Long,
-    val username: String?,
+    val username: String? = null,
     val context: CommandContext = IdleCommandContext,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),

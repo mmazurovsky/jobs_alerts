@@ -40,22 +40,34 @@ class AlertCreationService(
     internal suspend fun handleEvent(event: FromTelegramEvent) {
         if (event is TelegramMessageReceived) {
             val initialDescription = event.commandParameters?.trim()
-            // Only handle CreateAlert contexts or /create_alert command
             val currentContext = sessionManager.getCurrentContext(event.userId)
+            
             when {
+                // Handle /create_alert commands
                 event.commandName == "/cancel" && currentContext is CreateAlertSubContext -> {
+                    logger.info { "🔔 AlertCreationService: Processing /cancel command" }
                     sendMessage(event.chatId, "❌ Alert creation cancelled.")
                     sessionManager.resetToIdle(event.userId)
                 }
                 event.commandName == "/create_alert" && initialDescription.isNullOrEmpty() -> {
-                    sessionManager.setContext(event.userId, CreateAlertSubContext.Initial)
+                    logger.info { "🔔 AlertCreationService: Processing /create_alert command (no parameters)" }
+                    sessionManager.setContext(event.chatId, event.userId, CreateAlertSubContext.Initial)
                     processInitial(event)
                 }
-                (event.commandName == "/create_alert" && !initialDescription.isNullOrEmpty()) || currentContext is CreateAlertSubContext.CollectingDescription -> {
-                    sessionManager.setContext(event.userId, CreateAlertSubContext.CollectingDescription)
+                event.commandName == "/create_alert" && !initialDescription.isNullOrEmpty() -> {
+                    logger.info { "🔔 AlertCreationService: Processing /create_alert command with parameters: $initialDescription" }
+                    sessionManager.setContext(event.chatId, event.userId, CreateAlertSubContext.CollectingDescription)
                     processAlertDescription(event.chatId, event.userId, event.text)
                 }
-                currentContext is CreateAlertSubContext.ConfirmingDetails -> {
+                
+                // Handle context-based plain text messages
+                event.commandName == null && currentContext is CreateAlertSubContext.CollectingDescription -> {
+                    logger.info { "🔔 AlertCreationService: Handling description collection in context: '${event.text}'" }
+                    processAlertDescription(event.chatId, event.userId, event.text)
+                }
+                
+                event.commandName == null && currentContext is CreateAlertSubContext.ConfirmingDetails -> {
+                    logger.info { "🔔 AlertCreationService: Handling confirmation in context: '${event.text}'" }
                     processConfirmation(event.chatId, event.userId, event.username, event.text)
                 }
             }
@@ -74,7 +86,7 @@ class AlertCreationService(
         }
         try {
             sendMessage(event.chatId, instructionsMessage)
-            sessionManager.setContext(event.userId, CreateAlertSubContext.CollectingDescription)
+            sessionManager.setContext(chatId = event.chatId, userId = event.userId, context = CreateAlertSubContext.CollectingDescription)
         } catch (e: Exception) {
             logger.error(e) { "Error sending initial instructions to user $event.userId" }
         }
@@ -96,31 +108,14 @@ class AlertCreationService(
 
             val parseResult = jobSearchParserService.parseUserInput(description, userId)
 
-            if (parseResult.success && parseResult.jobSearchIn != null) {
-                // Successfully parsed, show for confirmation
-                val confirmationMessage = buildString {
-                    appendLine("✅ **Job alert parsed successfully!**")
-                    appendLine()
-                    append(parseResult.jobSearchIn.toHumanReadableString())
-                    appendLine()
-                    appendLine(
-                            "⏰ **Alert Frequency:** ${parseResult.jobSearchIn.timePeriod.displayName}"
-                    )
-                    appendLine()
-                    appendLine("**Is this correct?**")
-                    appendLine("• Reply '**yes**' to create the alert")
-                    appendLine("• Reply '**no**' to modify your alert")
-                    appendLine("• Use /cancel to abort")
+            if (parseResult.success && parseResult.jobSearchIn != null) {                
+                    sessionManager.updateSession(userId) { session ->
+                        session.copy(pendingJobSearch = parseResult.jobSearchIn, retryCount = 0)
+                    }
+                    sessionManager.setContext(chatId = chatId, userId = userId, context = CreateAlertSubContext.ConfirmingDetails)
+                    showConfirmationMessage(chatId, userId, parseResult.jobSearchIn)
                 }
-
-                sessionManager.updateSession(userId) { session ->
-                    session.copy(pendingJobSearch = parseResult.jobSearchIn, retryCount = 0)
-                }
-                sessionManager.setContext(userId, CreateAlertSubContext.ConfirmingDetails)
-
-                sendMessage(chatId, confirmationMessage)
-            } else {
-                // Parsing failed, ask for retry
+             else {
                 handleParseFailure(chatId, userId, parseResult)
             }
         } catch (e: Exception) {
@@ -131,6 +126,7 @@ class AlertCreationService(
             )
         }
     }
+    
 
     private suspend fun processConfirmation(
             chatId: Long,
@@ -195,7 +191,7 @@ class AlertCreationService(
                 }
 
                 sessionManager.updateSession(userId) { session ->
-                    session.copy(pendingJobSearch = null, retryCount = session.retryCount + 1)
+                    session.copy(pendingJobSearch = null, retryCount = session.retryCount + 1, context = CreateAlertSubContext.CollectingDescription)
                 }
 
                 sendMessage(chatId, retryMessage)
@@ -219,6 +215,26 @@ class AlertCreationService(
         jobSearchScheduler.addJobSearch(saved)
 
         return saved.id
+    }
+    
+    private suspend fun showConfirmationMessage(chatId: Long, userId: Long, jobSearchIn: JobSearchIn) {
+        val confirmationMessage = buildString {
+            appendLine("✅ **Job alert parsed successfully!**")
+            appendLine()
+            append(jobSearchIn.toHumanReadableString())
+            appendLine()
+            appendLine("**Is this correct?**")
+            appendLine("• Reply '**yes**' to create the alert")
+            appendLine("• Reply '**no**' to modify your alert")
+            appendLine("• Use /cancel to abort")
+        }
+
+        sessionManager.updateSession(userId) { session ->
+            session.copy(pendingJobSearch = jobSearchIn, retryCount = 0)
+        }
+        sessionManager.setContext(chatId = chatId, userId = userId, context = CreateAlertSubContext.ConfirmingDetails)
+
+        sendMessage(chatId, confirmationMessage)
     }
 
     private suspend fun handleParseFailure(

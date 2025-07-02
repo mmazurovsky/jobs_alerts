@@ -42,5 +42,16 @@ enum class TimePeriod(
         fun getDefault(): TimePeriod = `1 hour`
 
         fun getOneTimeSearchPeriod(): TimePeriod = `1 week`
+        
+        fun getAllLabels(): List<String> = values().map { it.displayName }
+        
+        fun getRecommendedOptions(): List<TimePeriod> = listOf(
+            `1 hour`,
+            `4 hours`, 
+            `24 hours`,
+            `1 week`
+        )
+        
+        fun getRecommendedLabels(): List<String> = getRecommendedOptions().map { it.displayName }
     }
 } 

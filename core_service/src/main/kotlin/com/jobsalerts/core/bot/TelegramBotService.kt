@@ -3,6 +3,7 @@ package com.jobsalerts.core.bot
 import com.jobsalerts.core.domain.model.*
 import com.jobsalerts.core.infrastructure.FromTelegramEventBus
 import com.jobsalerts.core.infrastructure.ToTelegramEventBus
+import com.jobsalerts.core.service.*
 import dev.inmo.tgbotapi.bot.ktor.telegramBot
 import dev.inmo.tgbotapi.extensions.api.bot.getMe
 import dev.inmo.tgbotapi.extensions.api.send.sendTextMessage
@@ -32,33 +33,26 @@ class TelegramBotService(
     private var outboundSubscription: Job? = null
     private var botJob: Job? = null
     private val bot = telegramBot(botToken)
+    private var botName: String = ""
 
     @PostConstruct
     fun initialize() {
+        logger.info { "🔧 TelegramBotService: Starting initialization..." }
+        
         // Subscribe to outbound events
         outboundSubscription = toTelegramEventBus.subscribe(serviceScope) { event -> 
             handleToTelegramEvent(event) 
         }
+        logger.info { "📬 TelegramBotService: Subscribed to outbound events" }
         
-        // Start the bot
-        botJob = serviceScope.launch {
-            try {
-                val me = bot.getMe()
-                logger.info { "🤖 TelegramBotService initialized with bot username: ${me.username}" }
-                logger.info { "🔧 TelegramBotService: Bot token starts with: ${botToken.take(10)}..." }
-                logger.info { "📡 TelegramBotService: Starting long polling bot..." }
-                
-                bot.buildBehaviourWithLongPolling {
-                    logger.info { "🚀 TelegramBotService: Long polling started successfully" }
-                    
-                    // Handle all text messages (including commands)
-                    onText { message ->
-                        handleIncomingMessage(message)
-                    }
-                }.join()
-            } catch (e: Exception) {
-                logger.error(e) { "💥 TelegramBotService: Error starting bot" }
-            }
+        // Check bot info first
+        runBlocking {
+            checkBotInfo()
+        }
+        
+        // Start the bot in background
+        serviceScope.launch {
+            initBot()
         }
         
         logger.info { "✅ TelegramBotService: Initialization completed" }
@@ -72,10 +66,112 @@ class TelegramBotService(
         logger.info { "TelegramBotService cleanup completed" }
     }
 
+    private suspend fun checkBotInfo() {
+        try {
+            logger.info { "🤖 TelegramBotService: Testing bot connection..." }
+            val me = bot.getMe()
+            botName = me.firstName ?: me.username?.username ?: "Unknown"
+            logger.info { "🤖 TelegramBotService initialized with bot username: ${me.username}" }
+            logger.info { "🔧 TelegramBotService: Bot token starts with: ${botToken.take(10)}..." }
+        } catch (e: Exception) {
+            logger.error(e) { "💥 TelegramBotService: Error checking bot info" }
+            throw e
+        }
+    }
+
+    private suspend fun initBot() {
+        try {
+            logger.info { "📡 TelegramBotService: Starting long polling bot..." }
+            
+            bot.buildBehaviourWithLongPolling {
+                logger.info { "🚀 TelegramBotService: Long polling started successfully" }
+                
+                // Handle all text messages - this will process both commands with parameters and regular text
+                onText { message ->
+                    val messageText = message.content.text
+                    if (messageText.startsWith("/")) {
+                        // Handle commands that have parameters
+                        val parts = messageText.split(" ", limit = 2)
+                        val commandName = parts[0].lowercase()
+                        val hasParameters = parts.size > 1 && parts[1].trim().isNotEmpty()
+                        
+                        if (hasParameters && commandName in listOf("/delete_alert", "/edit_alert", "/search_now")) {
+                            logger.info { "⚡ TelegramBotService: Received command with parameters: $messageText" }
+                            handleIncomingMessage(message)
+                        } else if (!hasParameters && commandName !in listOf("/start", "/help", "/menu", "/create_alert", "/list_alerts", "/delete_alert", "/edit_alert", "/search_now", "/cancel")) {
+                            // Handle any unknown commands
+                            logger.info { "⚡ TelegramBotService: Received unknown command: $messageText" }
+                            handleIncomingMessage(message)
+                        }
+                        // Commands without parameters are handled by onCommand handlers
+                    } else {
+                        // Handle regular text messages (non-commands)
+                        logger.info { "📩 TelegramBotService: Received non-command text message" }
+                        handleIncomingMessage(message)
+                    }
+                }
+                
+                // Handle simple commands without parameters
+                onCommand("start") { message ->
+                    logger.info { "⚡ TelegramBotService: Received /start command" }
+                    handleIncomingMessage(message)
+                }
+                
+                onCommand("help") { message ->
+                    logger.info { "⚡ TelegramBotService: Received /help command" }
+                    handleIncomingMessage(message)
+                }
+                
+                onCommand("menu") { message ->
+                    logger.info { "⚡ TelegramBotService: Received /menu command" }
+                    handleIncomingMessage(message)
+                }
+                
+                onCommand("create_alert") { message ->
+                    logger.info { "⚡ TelegramBotService: Received /create_alert command" }
+                    handleIncomingMessage(message)
+                }
+                
+                onCommand("list_alerts") { message ->
+                    logger.info { "⚡ TelegramBotService: Received /list_alerts command" }
+                    handleIncomingMessage(message)
+                }
+                
+                onCommand("delete_alert") { message ->
+                    logger.info { "⚡ TelegramBotService: Received /delete_alert command (no parameters)" }
+                    handleIncomingMessage(message)
+                }
+                
+                onCommand("edit_alert") { message ->
+                    logger.info { "⚡ TelegramBotService: Received /edit_alert command (no parameters)" }
+                    handleIncomingMessage(message)
+                }
+                
+                onCommand("search_now") { message ->
+                    logger.info { "⚡ TelegramBotService: Received /search_now command (no parameters)" }
+                    handleIncomingMessage(message)
+                }
+                
+                onCommand("cancel") { message ->
+                    logger.info { "⚡ TelegramBotService: Received /cancel command" }
+                    handleIncomingMessage(message)
+                }
+            }
+            
+            logger.info { "✅ TelegramBotService: Bot initialization completed" }
+            
+        } catch (e: Exception) {
+            logger.error(e) { "💥 TelegramBotService: Error starting bot" }
+            // Try to restart after delay
+            delay(5000)
+            logger.info { "🔄 TelegramBotService: Attempting to restart bot..." }
+            initBot()
+        }
+    }
+
     private suspend fun handleIncomingMessage(message: CommonMessage<TextContent>) {
         try {
             val chatId = message.chat.id.chatId.long
-            // In tgbotapi, text messages are always from users, so we can safely cast
             val userId = (message as? dev.inmo.tgbotapi.types.message.abstracts.FromUserMessage)?.from?.id?.chatId?.long ?: return
             val username = (message as? dev.inmo.tgbotapi.types.message.abstracts.FromUserMessage)?.from?.username?.username
             val messageText = message.content.text

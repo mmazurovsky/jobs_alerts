@@ -40,9 +40,14 @@ class DeleteSearchService(
             val currentContext = sessionManager.getCurrentContext(event.userId)
             val alertIds = event.commandParameters?.trim()
             
+            logger.info { "🗑️ DeleteSearchService: Processing event - commandName='${event.commandName}', context=$currentContext, userId=${event.userId}" }
+            
             when {
+                // Handle /delete_alert commands
                 event.commandName == "/delete_alert" && alertIds.isNullOrEmpty() -> {
-                    sessionManager.setContext(event.userId, DeleteAlertSubContext.SelectingAlert)
+                    logger.info { "🗑️ DeleteSearchService: Processing /delete_alert command (no parameters)" }
+                    sessionManager.setContext(chatId = event.chatId, userId = event.userId, context = DeleteAlertSubContext.SelectingAlert)
+                    logger.info { "🗑️ DeleteSearchService: Context set to SelectingAlert for user ${event.userId}" }
                     try {
                         processInitialDelete(event.chatId, event.userId)
                     } catch (e: Exception) {
@@ -53,7 +58,9 @@ class DeleteSearchService(
                 }
                 
                 event.commandName == "/delete_alert" && !alertIds.isNullOrEmpty() -> {
-                    sessionManager.setContext(event.userId, DeleteAlertSubContext.ConfirmingDeletion)
+                    logger.info { "🗑️ DeleteSearchService: Processing /delete_alert command with parameters: $alertIds" }
+                    sessionManager.setContext(chatId = event.chatId, userId = event.userId, context = DeleteAlertSubContext.ConfirmingDeletion)
+                    logger.info { "🗑️ DeleteSearchService: Context set to ConfirmingDeletion for user ${event.userId}" }
                     sessionManager.updateSession(event.userId) { session ->
                         session.copy(selectedAlertId = alertIds)
                     }
@@ -66,17 +73,29 @@ class DeleteSearchService(
                     }
                 }
                 
-                currentContext is DeleteAlertSubContext.SelectingAlert -> {
+                event.commandName == "/cancel" && currentContext is DeleteAlertSubContext -> {
+                    logger.info { "🗑️ DeleteSearchService: Processing /cancel command" }
+                    sendMessage(event.chatId, "❌ Delete operation cancelled.")
+                    sessionManager.resetToIdle(event.userId)
+                }
+                
+                // Handle context-based plain text messages
+                event.commandName == null && currentContext is DeleteAlertSubContext.SelectingAlert -> {
+                    logger.info { "🗑️ DeleteSearchService: Handling alert selection in context: '${event.text}'" }
                     processAlertIdSelection(event.chatId, event.userId, event.text)
                 }
                 
-                currentContext is DeleteAlertSubContext.ConfirmingDeletion -> {
+                event.commandName == null && currentContext is DeleteAlertSubContext.ConfirmingDeletion -> {
+                    logger.info { "🗑️ DeleteSearchService: Handling deletion confirmation in context: '${event.text}'" }
                     processConfirmation(event.chatId, event.userId, event.text)
                 }
                 
-                event.commandName == "/cancel" && currentContext is DeleteAlertSubContext -> {
-                    sendMessage(event.chatId, "❌ Delete operation cancelled.")
-                    sessionManager.resetToIdle(event.userId)
+                else -> {
+                    // Log when we're not handling an event for debugging
+                    if (event.commandName == "/delete_alert" || 
+                        (event.commandName == null && currentContext is DeleteAlertSubContext)) {
+                        logger.debug { "🗑️ DeleteSearchService: Event not handled - commandName='${event.commandName}', context=$currentContext" }
+                    }
                 }
             }
         }
@@ -141,7 +160,7 @@ class DeleteSearchService(
         sessionManager.updateSession(userId) { session ->
             session.copy(selectedAlertId = alertIds)
         }
-        sessionManager.setContext(userId, DeleteAlertSubContext.ConfirmingDeletion)
+        sessionManager.setContext(chatId = chatId, userId = userId, context = DeleteAlertSubContext.ConfirmingDeletion)
         
         processConfirmationRequest(chatId, userId, alertIds)
     }
@@ -183,7 +202,7 @@ class DeleteSearchService(
                 
                 // Go back to selecting alert if no valid IDs
                 if (validAlertIds.isEmpty()) {
-                    sessionManager.setContext(userId, DeleteAlertSubContext.SelectingAlert)
+                    sessionManager.setContext(chatId = chatId, userId = userId, context = DeleteAlertSubContext.SelectingAlert)
                 }
                 return
             }

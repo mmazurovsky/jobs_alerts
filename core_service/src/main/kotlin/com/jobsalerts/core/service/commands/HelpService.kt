@@ -35,17 +35,13 @@ class HelpService(
     }
 
     private suspend fun handleEvent(event: FromTelegramEvent) {
-        logger.info { "📚 HelpService: RECEIVED EVENT: $event" }
-        
         if (event is TelegramMessageReceived) {
-            logger.info { "📨 HelpService: Processing TelegramMessageReceived - commandName='${event.commandName}', userId=${event.userId}" }
             val currentContext = sessionManager.getCurrentContext(event.userId)
-            logger.info { "🔄 HelpService: Current user context: $currentContext" }
             
             when {
                 event.commandName == "/help" -> {
                     logger.info { "📖 HelpService: Processing /help command for user ${event.userId}" }
-                    sessionManager.setContext(event.userId, HelpSubContext.ShowingHelp)
+                    sessionManager.setContext(chatId = event.chatId, userId = event.userId, context = HelpSubContext.ShowingHelp)
                     try {
                         processHelpRequest(event.chatId, event.userId)
                         logger.info { "✅ HelpService: Successfully processed /help command" }
@@ -62,12 +58,12 @@ class HelpService(
                     sessionManager.resetToIdle(event.userId)
                 }
                 
-                else -> {
-                    logger.debug { "🔇 HelpService: Ignoring event - commandName='${event.commandName}', currentContext=$currentContext" }
+                // Only log if this service should handle the event  
+                event.commandName == "/help" || 
+                (event.commandName == "/cancel" && currentContext is HelpSubContext) -> {
+                    logger.debug { "🔇 HelpService: Handled relevant event but no action taken" }
                 }
             }
-        } else {
-            logger.debug { "🔇 HelpService: Ignoring non-TelegramMessageReceived event: $event" }
         }
     }
 
