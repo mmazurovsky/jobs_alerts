@@ -24,27 +24,26 @@ class MainController(
         logger.info { "Received job results for jobSearchId=${request.jobSearchId}, userId=${request.userId}, jobCount=${request.jobs.size}" }
         
         try {
-            // Validate job search exists
-            val jobSearch = jobSearchRepository.findById(request.jobSearchId)
-            if (jobSearch.isEmpty) {
-                logger.warn { "Job search not found: ${request.jobSearchId}" }
-                return ResponseEntity.badRequest().body(
-                    JobResultsCallbackResponse(
-                        status = "error",
-                        message = "Job search not found",
-                        receivedCount = 0
+            if (request.jobSearchId.startsWith("temp-")) {
+                logger.info { "Processing job results for temp job searchId=${request.jobSearchId}" }
+            } else {
+                val jobSearch = jobSearchRepository.findById(request.jobSearchId)
+                if (jobSearch.isEmpty) {
+                    logger.warn { "Job search not found: ${request.jobSearchId}" }
+                    return ResponseEntity.badRequest().body(
+                        JobResultsCallbackResponse(
+                            status = "error",
+                            message = "Job search not found",
+                            receivedCount = 0
+                        )
                     )
-                )
+                }
             }
 
             if (request.jobs.isEmpty()) {
                 logger.info { "No jobs received for jobSearchId=${request.jobSearchId}" }
                 return ResponseEntity.ok(JobResultsCallbackResponse(status = "received"))
             }
-            
-            // Get job search details
-            val jobSearchEntity = jobSearch.get()
-            logger.info { "Processing jobs for search: ${jobSearchEntity.jobTitle}" }
             
             // Filter out already sent jobs
             val sentJobs = sentJobRepository.findByUserId(request.userId)
@@ -55,7 +54,7 @@ class MainController(
             
             if (newJobs.isNotEmpty()) {
                 // Send notification about new jobs found
-                val message = "🎉 Found ${newJobs.size} new jobs for '${jobSearchEntity.jobTitle}'!\n\n" +
+                val message = "🎉 Found ${newJobs.size} new jobs for '${request.jobSearchId}'!\n\n" +
                     newJobs.take(3).joinToString("\n\n") { job ->
                         "📋 ${job.title}\n🏢 ${job.company}\n📍 ${job.location}\n🔗 ${job.link}"
                     } + if (newJobs.size > 3) "\n\n... and ${newJobs.size - 3} more jobs!" else ""

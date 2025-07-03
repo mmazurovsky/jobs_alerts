@@ -87,7 +87,7 @@ object Messages {
     const val HEADER_INVALID_ALERT_ID = "❌ **Invalid Alert ID**"
     const val HEADER_INVALID_ALERT_IDS = "❌ **Invalid Alert ID(s)**"
     const val HEADER_JOB_SEARCH_DETAILS = "🔍 **Job Search Details:**"
-    const val HEADER_EDITING_ALERT = "✏️ **Editing Alert:"
+    const val HEADER_EDITING_ALERT = "✏️ **Editing Alert:**"
     const val HEADER_CURRENT_ALERT_DETAILS = "**Current Alert Details:**"
     const val HEADER_AVAILABLE_ACTIONS = "**Possible Actions:**"
     const val HEADER_REQUIRED_FIELDS = "**Required Fields:**"
@@ -172,16 +172,17 @@ object Messages {
         appendLine()
         appendLine("Choose what you'd like to do:")
         appendLine()
-        appendLine("**Search Jobs Immediately without creating an alert for new job postings:**")
+        appendLine("**🔍 Search Jobs Immediately:**")
+        appendLine("(Search without creating recurring alert)")
         appendLine(MENU_SEARCH_NOW)
         appendLine()
-        appendLine("**Job Alert Management:**")
+        appendLine("**🔔 Job Alert Management:**")
         appendLine(MENU_CREATE_ALERT)
         appendLine(MENU_LIST_ALERTS)
         appendLine(MENU_EDIT_ALERT)
         appendLine(MENU_DELETE_ALERT)
         appendLine()
-        appendLine("**Help & Info:**")
+        appendLine("**📖 Help & Info:**")
         appendLine(MENU_HELP)
         appendLine()
         appendLine("Just use any command to get started!")
@@ -356,8 +357,8 @@ object Messages {
         }
         
         appendLine(HEADER_EXAMPLES)
-        appendLine("• `123` - Delete alert with ID 123")
-        appendLine("• `123,456` - Delete alerts with IDs 123 and 456")
+        appendLine("• **123** - Delete alert with ID 123")
+        appendLine("• **123,456** - Delete alerts with IDs 123 and 456")
         appendLine()
         appendLine(USE_CANCEL_TO_ABORT)
     }
@@ -437,7 +438,7 @@ object Messages {
             appendLine()
         }
         
-        appendLine("**Example:** `123` (just the ID number)")
+        appendLine("**Example:** **123** (just the ID number)")
         appendLine()
         appendLine(USE_CANCEL_TO_ABORT)
     }
@@ -479,7 +480,8 @@ object Messages {
     }
     
     fun getActiveAlertsMessage(userSearches: List<JobSearchOut>): String = buildString {
-        appendLine("$HEADER_YOUR_ALERTS (${userSearches.size} total)\n")
+        appendLine("$HEADER_YOUR_ALERTS (${userSearches.size} total)")
+        appendLine()
         
         userSearches.forEach { jobSearch ->
             append(jobSearch.toMessage())
@@ -555,7 +557,8 @@ object Messages {
     
     // === Job Results Messages ===
     fun getJobResultsMessage(jobs: List<FullJobListing>): String = buildString {
-        appendLine("🔔 New job listings found for your search.\n")
+        appendLine("🔔 **New job listings found for your search:**")
+        appendLine()
         jobs.forEach { job ->
             appendLine(job.toMessage())
             appendLine()

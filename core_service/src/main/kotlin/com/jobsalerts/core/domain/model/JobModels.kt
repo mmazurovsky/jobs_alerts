@@ -130,14 +130,14 @@ data class JobSearchOut(
                         .atZone(ZoneId.systemDefault())
                         .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
         return buildString {
-            appendLine("🆔 Alert ID: ${id}\n")
-            appendLine("Job Title: $jobTitle\n")
-            appendLine("Location: $location\n")
-            appendLine("Job Types: ${jobTypes.joinToString(", ")}\n")
-            appendLine("Remote Types: ${remoteTypes.joinToString(", ")}\n")
-            appendLine("Filter Text: $filterText\n")
-            appendLine("Frequency: ${timePeriod.displayName}\n")
-            appendLine("Created At: $humanReadableTime\n")
+            appendLine("🆔 Alert ID: $id")
+            appendLine("📝 Job Title: $jobTitle")
+            appendLine("📍 Location: $location")
+            appendLine("💼 Job Types: ${jobTypes.joinToString(", ") { it.label }}")
+            appendLine("🏠 Remote Types: ${remoteTypes.joinToString(", ") { it.label }}")
+            appendLine("🔍 Filter Text: ${filterText ?: "None"}")
+            appendLine("⏰ Frequency: ${timePeriod.displayName}")
+            appendLine("📅 Created At: $humanReadableTime")
         }
     }
     

@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  core_service:
+  core-service:
     build:
       context: .
       dockerfile: core_service/Dockerfile
@@ -22,9 +22,9 @@ services:
       retries: 3
       start_period: 40s
     depends_on:
-      - linkedin_scraper_service
+      - linkedin-scraper-service
 
-  linkedin_scraper_service:
+  linkedin-scraper-service:
     build:
       context: .
       dockerfile: linkedin_scraper_service/Dockerfile

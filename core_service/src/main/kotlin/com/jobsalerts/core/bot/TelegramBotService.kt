@@ -15,6 +15,8 @@ import dev.inmo.tgbotapi.types.message.abstracts.CommonMessage
 import dev.inmo.tgbotapi.types.message.content.TextContent
 import dev.inmo.tgbotapi.types.message.abstracts.FromUserMessage
 import dev.inmo.tgbotapi.types.ChatId
+import dev.inmo.tgbotapi.types.message.MarkdownParseMode
+import dev.inmo.tgbotapi.types.message.ParseMode
 import dev.inmo.tgbotapi.types.toChatId
 import jakarta.annotation.PostConstruct
 import jakarta.annotation.PreDestroy
@@ -291,7 +293,7 @@ class TelegramBotService(
         try {
             logger.info { "📡 TelegramBotService: Executing Telegram API call for chatId=$chatId, messageLength=${message.length}" }
             
-            bot.sendTextMessage(chatId, message)
+            bot.sendTextMessage(chatId, message, parseMode = MarkdownParseMode)
             
             logger.info { "✅ TelegramBotService: Message sent successfully to chat $chatId" }
         } catch (e: Exception) {

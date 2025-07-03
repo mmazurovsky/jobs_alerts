@@ -53,13 +53,16 @@ data class FullJobListing(
 ) {
     fun toMessage(): String {
         return buildString {
-            appendLine("Compatibility: $compatibilityScore\n")
-            appendLine("Title: $title\n")
-            appendLine("Employer: $company\n")
-            appendLine("Techstack: ${techstack.joinToString(", ")}\n")
-            appendLine("Location: $location\n")
-            appendLine("Created: $createdAgo\n")
-            appendLine("🔗: $link\n")
+            appendLine("⭐ **Compatibility:** ${compatibilityScore ?: "N/A"}")
+            appendLine("📝 **Title:** $title")
+            appendLine("🏢 **Employer:** $company")
+            appendLine("🔧 **Tech Stack:** ${techstack.joinToString(", ")}")
+            appendLine("📍 **Location:** $location")
+            appendLine("📅 **Created:** $createdAgo")
+            if (!filterReason.isNullOrBlank()) {
+                appendLine("🤖 **AI Reasoning:** $filterReason")
+            }
+            appendLine("🔗 **Link:** $link")
         }
     }
 }
