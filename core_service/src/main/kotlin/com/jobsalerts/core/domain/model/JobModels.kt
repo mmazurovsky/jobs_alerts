@@ -59,14 +59,14 @@ data class JobSearchIn(
                 appendLine()
                 appendLine("Please provide your job search criteria in natural language. I'll help you parse the details.")
                 appendLine()
-                appendLine("**Required Fields:**")
+                appendLine("**Required Data:**")
                 appendLine("• **Job Title** - What role are you looking for?")
-                appendLine("  Examples: 'Software Engineer', 'Data Scientist', 'Product Manager', 'DevOps Engineer'")
+                appendLine("  Examples: 'Python Software Engineer', 'Senior Data Scientist', 'Product Manager', 'DevOps Engineer'")
                 appendLine()
                 appendLine("• **Location** - Where do you want to work?")
-                appendLine("  Examples: 'New York', 'San Francisco', 'Remote', 'Berlin', 'London', 'anywhere'")
+                appendLine("  Examples: New York, San Francisco, Berlin, London, Vancouver,Worldwide")
                 appendLine()
-                appendLine("**Optional Fields:**")
+                appendLine("**Optional Data:**")
                 appendLine("• **Job Types** - Employment type preferences:")
                 appendLine("  - Available options: ${JobType.getAllLabels().joinToString(", ")}")
                 appendLine("  - Default if not specified: ${JobType.getDefault().label}")
@@ -75,12 +75,12 @@ data class JobSearchIn(
                 appendLine("  - Available options: ${RemoteType.getAllLabels().joinToString(", ")}")
                 appendLine("  - Default if not specified: ${RemoteType.getDefault().label}")
                 appendLine()
-                appendLine("• **Alert Frequency** - How often to search for jobs:")
+                appendLine("• **Alert Frequency** - How often bot should search for jobs and write you a message with results:")
                 appendLine("  - Recommended options: ${TimePeriod.getRecommendedLabels().joinToString(", ")}")
                 appendLine("  - Default if not specified: ${TimePeriod.getDefault().displayName}")
                 appendLine()
-                appendLine("• **Filter Text** - Additional requirements or exclusions")
-                appendLine("  Examples: 'no on-call', 'without requirement to speak German', 'visa sponsorship', 'avoid startups'")
+                appendLine("• **Filter Text** - Additional prompt with specific requirements or exclusions")
+                appendLine("  Examples: 'no on-call', 'without requirement to speak German', 'providing visa sponsorship', 'employer should not be a startup', 'no relocation required'")
                 appendLine()
                 appendLine("**Example Descriptions:**")
                 getExamples().forEach { example ->
@@ -93,16 +93,12 @@ data class JobSearchIn(
 
         fun getExamples(): List<String> {
             return listOf(
-                "Senior Software Engineer in San Francisco, full-time, remote, \$150k+, no on-call",
-                "Data Scientist role in Berlin, contract work, English speaking, no travel required",
-                "Product Manager in New York, full-time, on-site, avoid startups, health insurance required",
-                "DevOps Engineer, remote anywhere, \$120k+ salary, Kubernetes required, no legacy systems",
-                "Frontend Developer in London, part-time, React required, no PHP, flexible hours",
-                "Backend Engineer in Toronto, full-time, hybrid, Java preferred, no weekend work",
-                "Mobile Developer in Austin, contract, iOS experience, no Android, visa sponsorship",
+                "Senior Software Engineer in San Francisco, full-time, remote, no startups, preferably in Google or Meta",
+                "Data Scientist role in Berlin, contract work, no requirement to speak German, no travel required",
+                "Product Manager in New York, full-time, on-site, avoid startups, health insurance provided",
+                "DevOps Engineer, remote anywhere, \$120k+ salary, not mentioning SAP or Oracle",
+                "Frontend Developer in London, part-time, React, not requiring PHP knowledge, flexible hours, visa sponsorship",
                 "QA Engineer in Seattle, full-time, remote, automation experience, above \$90k, no manual testing",
-                "UI/UX Designer in Los Angeles, full-time, Fortune 500 companies only, Figma required",
-                "Full Stack Developer, remote, internship, JavaScript required, learning opportunities, no unpaid"
             )
         }
     }

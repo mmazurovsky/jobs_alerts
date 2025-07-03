@@ -1,5 +1,6 @@
 package com.jobsalerts.core.bot
 
+import com.jobsalerts.core.Messages
 import com.jobsalerts.core.domain.model.*
 import com.jobsalerts.core.infrastructure.FromTelegramEventBus
 import com.jobsalerts.core.infrastructure.ToTelegramEventBus
@@ -223,14 +224,7 @@ class TelegramBotService(
                 }
                 is SearchResultsToTelegramEvent -> {
                     logger.info { "🔍 TelegramBotService: Sending search results to chatId=${event.chatId}, jobCount=${event.eventData.size}" }
-                    val message = buildString {
-                        appendLine("🔔 New job listings found for your search.\n")
-                        event.eventData.forEach { job ->
-                            appendLine(job.toMessage())
-                            appendLine()
-                        }
-                    }
-                    sendMessageWithSplitting(event.chatId.toChatId(), message)
+                    sendMessageWithSplitting(event.chatId.toChatId(), Messages.getJobResultsMessage(event.eventData))
                 }
             }
             logger.info { "✅ TelegramBotService: Successfully handled outbound event" }

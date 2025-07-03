@@ -1,8 +1,10 @@
 package com.jobsalerts.core.service
 
+import com.jobsalerts.core.Messages
 import com.jobsalerts.core.domain.model.*
 import com.jobsalerts.core.infrastructure.FromTelegramEventBus
 import com.jobsalerts.core.infrastructure.ToTelegramEventBus
+import com.jobsalerts.core.repository.JobSearchRepository
 import jakarta.annotation.PostConstruct
 import jakarta.annotation.PreDestroy
 import kotlinx.coroutines.*
@@ -11,10 +13,11 @@ import org.springframework.stereotype.Service
 
 @Service
 class DeleteSearchService(
-    private val jobSearchService: JobSearchService,
     private val fromTelegramEventBus: FromTelegramEventBus,
     private val toTelegramEventBus: ToTelegramEventBus,
-    private val sessionManager: SessionManager
+    private val sessionManager: SessionManager,
+    private val jobSearchRepository: JobSearchRepository,
+    private val jobSearchScheduler: JobSearchScheduler
 ) : Logging {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -52,194 +55,91 @@ class DeleteSearchService(
                         processInitialDelete(event.chatId, event.userId)
                     } catch (e: Exception) {
                         logger.error(e) { "Error processing initial delete for user ${event.userId}" }
-                        sendMessage(event.chatId, "❌ Error retrieving your job alerts. Please try again later.")
+                        sendMessage(event.chatId, Messages.ERROR_RETRIEVAL)
                         sessionManager.resetToIdle(event.userId)
                     }
                 }
-                
                 event.commandName == "/delete_alert" && !alertIds.isNullOrEmpty() -> {
                     logger.info { "🗑️ DeleteSearchService: Processing /delete_alert command with parameters: $alertIds" }
-                    sessionManager.setContext(chatId = event.chatId, userId = event.userId, context = DeleteAlertSubContext.ConfirmingDeletion)
-                    logger.info { "🗑️ DeleteSearchService: Context set to ConfirmingDeletion for user ${event.userId}" }
-                    sessionManager.updateSession(event.userId) { session ->
-                        session.copy(selectedAlertId = alertIds)
-                    }
-                    try {
-                        processConfirmationRequest(event.chatId, event.userId, alertIds)
-                    } catch (e: Exception) {
-                        logger.error(e) { "Error processing delete confirmation for user ${event.userId}" }
-                        sendMessage(event.chatId, "❌ Error processing deletion request. Please try again later.")
-                        sessionManager.resetToIdle(event.userId)
-                    }
+                    sessionManager.setContext(chatId = event.chatId, userId = event.userId, context = DeleteAlertSubContext.SelectingAlert)
+                    processAlertIdProvided(event.chatId, event.userId, alertIds)
                 }
                 
-                event.commandName == "/cancel" && currentContext is DeleteAlertSubContext -> {
-                    logger.info { "🗑️ DeleteSearchService: Processing /cancel command" }
-                    sendMessage(event.chatId, "❌ Delete operation cancelled.")
-                    sessionManager.resetToIdle(event.userId)
-                }
-                
-                // Handle context-based plain text messages
+                // Handle context-based plain text messages (alert ID selection)
                 event.commandName == null && currentContext is DeleteAlertSubContext.SelectingAlert -> {
-                    logger.info { "🗑️ DeleteSearchService: Handling alert selection in context: '${event.text}'" }
+                    logger.info { "🗑️ DeleteSearchService: Handling alert ID selection in context: '${event.text}'" }
                     processAlertIdSelection(event.chatId, event.userId, event.text)
                 }
                 
+                // Handle confirmation messages
                 event.commandName == null && currentContext is DeleteAlertSubContext.ConfirmingDeletion -> {
                     logger.info { "🗑️ DeleteSearchService: Handling deletion confirmation in context: '${event.text}'" }
-                    processConfirmation(event.chatId, event.userId, event.text)
+                    processConfirmationRequest(event.chatId, event.userId, event.text)
+                }
+                
+                // Handle /cancel command
+                event.commandName == "/cancel" && currentContext is DeleteAlertSubContext -> {
+                    logger.info { "🗑️ DeleteSearchService: Processing /cancel command" }
+                    sendMessage(event.chatId, Messages.CANCEL_MESSAGE)
+                    sessionManager.resetToIdle(event.userId)
                 }
                 
                 else -> {
-                    // Log when we're not handling an event for debugging
-                    if (event.commandName == "/delete_alert" || 
-                        (event.commandName == null && currentContext is DeleteAlertSubContext)) {
-                        logger.debug { "🗑️ DeleteSearchService: Event not handled - commandName='${event.commandName}', context=$currentContext" }
-                    }
+                    logger.debug { "🗑️ DeleteSearchService: Event not handled - commandName='${event.commandName}', context=$currentContext" }
                 }
             }
         }
     }
 
     private suspend fun processInitialDelete(chatId: Long, userId: Long) {
-        try {
-            val userSearches = jobSearchService.getUserSearches(userId)
-            
-            if (userSearches.isEmpty()) {
-                val message = """
-                    🗑️ **Delete Job Alert**
-                    
-                    You don't have any active job alerts to delete.
-                    
-                    **Get started:**
-                    /create_alert - Create your first job alert
-                    /help - See all available commands
-                """.trimIndent()
-                
-                sendMessage(chatId, message)
-                sessionManager.resetToIdle(userId)
-            } else {
-                val message = buildString {
-                    appendLine("🗑️ **Delete Job Alert**")
-                    appendLine()
-                    appendLine("Which alert(s) would you like to delete? Please provide the alert ID(s).")
-                    appendLine()
-                    appendLine("**Your Active Job Alerts:**")
-                    appendLine()
-                    
-                    userSearches.forEach { jobSearch ->
-                        append(jobSearch.toMessage())
-                        appendLine("─".repeat(40))
-                        appendLine()
-                    }
-                    
-                    appendLine("**Examples:**")
-                    appendLine("• `123` - Delete alert with ID 123")
-                    appendLine("• `123,456` - Delete alerts with IDs 123 and 456")
-                    appendLine()
-                    appendLine("Use /cancel to abort this operation.")
-                }
-                
-                sendMessage(chatId, message.toString())
-            }
-        } catch (e: Exception) {
-            logger.error(e) { "Error in processInitialDelete for user $userId" }
-            sendMessage(chatId, "❌ Error retrieving your job alerts. Please try again later.")
-            sessionManager.resetToIdle(userId)
-        }
-    }
-
-    private suspend fun processAlertIdSelection(chatId: Long, userId: Long, text: String) {
-        val alertIds = text.trim()
+        val userSearches = jobSearchRepository.findByUserId(userId)
         
-        if (alertIds.isBlank()) {
-            sendMessage(chatId, "Please provide valid alert ID(s). Use /list_alerts to see your alerts or /cancel to abort.")
+        if (userSearches.isEmpty()) {
+            sendMessage(chatId, Messages.getNoAlertsToDeleteMessage())
+            sessionManager.resetToIdle(userId)
             return
         }
         
+        sendMessage(chatId, Messages.getSelectAlertToDeleteMessage(userSearches))
+    }
+
+    private suspend fun processAlertIdProvided(chatId: Long, userId: Long, alertIds: String) {
+        val alertIdList = alertIds.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        val userSearches = jobSearchRepository.findByUserId(userId)
+        val validAlertIds = alertIdList.filter { alertId ->
+            userSearches.any { it.id == alertId }
+        }
+        val invalidAlertIds = alertIdList - validAlertIds.toSet()
+
+        if (invalidAlertIds.isNotEmpty()) {
+            sendMessage(chatId, Messages.getInvalidAlertIdsMessage(invalidAlertIds, validAlertIds))
+            
+            // Go back to selecting alert if no valid IDs
+            if (validAlertIds.isEmpty()) {
+                sessionManager.setContext(chatId = chatId, userId = userId, context = DeleteAlertSubContext.SelectingAlert)
+            }
+            return
+        }
+
+        // Store selected alert IDs and proceed to confirmation
         sessionManager.updateSession(userId) { session ->
             session.copy(selectedAlertId = alertIds)
         }
         sessionManager.setContext(chatId = chatId, userId = userId, context = DeleteAlertSubContext.ConfirmingDeletion)
         
-        processConfirmationRequest(chatId, userId, alertIds)
+        sendMessage(chatId, Messages.getDeleteConfirmationMessage(validAlertIds))
     }
 
-    private suspend fun processConfirmationRequest(chatId: Long, userId: Long, alertIds: String) {
-        try {
-            val alertIdList = alertIds.split(",").map { it.trim() }.filter { it.isNotBlank() }
-            
-            // Validate that all alert IDs exist and belong to the user
-            val userSearches = jobSearchService.getUserSearches(userId)
-            val validAlertIds = mutableListOf<String>()
-            val invalidAlertIds = mutableListOf<String>()
-            
-            alertIdList.forEach { alertId ->
-                val search = userSearches.find { it.id == alertId }
-                if (search != null) {
-                    validAlertIds.add(alertId)
-                } else {
-                    invalidAlertIds.add(alertId)
-                }
-            }
-            
-            if (invalidAlertIds.isNotEmpty()) {
-                val message = buildString {
-                    appendLine("❌ **Invalid Alert ID(s)**")
-                    appendLine()
-                    appendLine("The following alert ID(s) don't exist or don't belong to you:")
-                    invalidAlertIds.forEach { appendLine("• $it") }
-                    appendLine()
-                    if (validAlertIds.isNotEmpty()) {
-                        appendLine("Valid alert ID(s): ${validAlertIds.joinToString(", ")}")
-                        appendLine()
-                        appendLine("Please provide only valid alert IDs or use /cancel to abort.")
-                    } else {
-                        appendLine("Please provide valid alert ID(s) or use /list_alerts to see your alerts.")
-                    }
-                }
-                sendMessage(chatId, message.toString())
-                
-                // Go back to selecting alert if no valid IDs
-                if (validAlertIds.isEmpty()) {
-                    sessionManager.setContext(chatId = chatId, userId = userId, context = DeleteAlertSubContext.SelectingAlert)
-                }
-                return
-            }
-            
-            // All IDs are valid, ask for confirmation
-            val message = buildString {
-                appendLine("🗑️ **Delete Alert Confirmation**")
-                appendLine()
-                if (validAlertIds.size == 1) {
-                    appendLine("Are you sure you want to delete alert: **${validAlertIds[0]}**?")
-                } else {
-                    appendLine("Are you sure you want to delete these ${validAlertIds.size} alerts?")
-                    validAlertIds.forEach { appendLine("• **$it**") }
-                }
-                appendLine()
-                appendLine("⚠️ **Warning:** This action cannot be undone!")
-                appendLine()
-                appendLine("• Reply '**yes**' to confirm deletion")
-                appendLine("• Reply '**no**' to cancel")
-                appendLine("• Use /cancel to abort this operation")
-            }
-            
-            sendMessage(chatId, message.toString())
-            
-        } catch (e: Exception) {
-            logger.error(e) { "Error in processConfirmationRequest for user $userId" }
-            sendMessage(chatId, "❌ Error processing deletion request. Please try again later.")
-            sessionManager.resetToIdle(userId)
-        }
+    private suspend fun processAlertIdSelection(chatId: Long, userId: Long, alertIds: String) {
+        processAlertIdProvided(chatId, userId, alertIds)
     }
 
-    private suspend fun processConfirmation(chatId: Long, userId: Long, confirmation: String) {
-        val session = sessionManager.getSession(userId, chatId, null)
-        val alertIds = session.selectedAlertId
+    private suspend fun processConfirmationRequest(chatId: Long, userId: Long, confirmation: String) {
+        val session = sessionManager.getSession(userId, chatId, "")
+        val selectedAlertIds = session.selectedAlertId
         
-        if (alertIds.isNullOrBlank()) {
-            sendMessage(chatId, "❌ No alert IDs found. Please start over with /delete_alert.")
+        if (selectedAlertIds.isNullOrEmpty()) {
+            sendMessage(chatId, Messages.ERROR_NO_PENDING_ALERT)
             sessionManager.resetToIdle(userId)
             return
         }
@@ -247,62 +147,43 @@ class DeleteSearchService(
         val lowerConfirmation = confirmation.lowercase().trim()
         
         when {
-            lowerConfirmation in listOf("yes", "y", "confirm", "delete") -> {
-                try {
-                    val alertIdList = alertIds.split(",").map { it.trim() }.filter { it.isNotBlank() }
-                    val deletedIds = mutableListOf<String>()
-                    val failedIds = mutableListOf<String>()
-                    
-                    alertIdList.forEach { alertId ->
-                        val success = jobSearchService.deleteJobSearch(userId, alertId)
-                        if (success) {
-                            deletedIds.add(alertId)
-                        } else {
-                            failedIds.add(alertId)
-                        }
-                    }
-                    
-                    val message = buildString {
-                        if (deletedIds.isNotEmpty()) {
-                            if (deletedIds.size == 1) {
-                                appendLine("✅ **Alert ${deletedIds[0]} has been deleted successfully.**")
-                            } else {
-                                appendLine("✅ **${deletedIds.size} alerts have been deleted successfully:**")
-                                deletedIds.forEach { appendLine("• $it") }
-                            }
-                        }
-                        
-                        if (failedIds.isNotEmpty()) {
-                            appendLine()
-                            appendLine("❌ **Failed to delete the following alert(s):**")
-                            failedIds.forEach { appendLine("• $it") }
-                            appendLine("Please try again later or contact support.")
-                        }
-                    }
-                    
-                    sendMessage(chatId, message.toString())
-                    sessionManager.resetToIdle(userId)
-                    
-                } catch (e: Exception) {
-                    logger.error(e) { "Error deleting alerts for user $userId" }
-                    sendMessage(chatId, "❌ Failed to delete alert(s). Please try again later.")
-                    sessionManager.resetToIdle(userId)
-                }
+            lowerConfirmation in listOf("yes", "y", "confirm", "ok", "proceed") -> {
+                performDeletion(chatId, userId, selectedAlertIds)
             }
-            
             lowerConfirmation in listOf("no", "n", "cancel") -> {
-                if (alertIds.contains(",")) {
-                    sendMessage(chatId, "❌ Alert deletion cancelled. Your alerts are safe!")
-                } else {
-                    sendMessage(chatId, "❌ Alert deletion cancelled. Your alert is safe!")
-                }
+                sendMessage(chatId, Messages.CANCEL_MESSAGE)
                 sessionManager.resetToIdle(userId)
             }
-            
             else -> {
-                sendMessage(chatId, "Please respond with '**yes**' to delete the alert(s), '**no**' to cancel, or /cancel to abort.")
+                sendMessage(chatId, Messages.getConfirmationInstruction("delete"))
             }
         }
+    }
+
+    private suspend fun performDeletion(chatId: Long, userId: Long, selectedAlertIds: String) {
+        val alertIdList = selectedAlertIds.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        val deletedIds = mutableListOf<String>()
+        val failedIds = mutableListOf<String>()
+        
+        alertIdList.forEach { alertId ->
+            try {
+                val deleted = jobSearchRepository.deleteByIdAndUserId(alertId, userId)
+                if (deleted > 0) {
+                    jobSearchScheduler.removeJobSearch(alertId)
+                    deletedIds.add(alertId)
+                    logger.info { "Deleted job search: $alertId for user $userId" }
+                } else {
+                    failedIds.add(alertId)
+                    logger.warn { "Failed to delete job search: $alertId for user $userId - not found" }
+                }
+            } catch (e: Exception) {
+                logger.error(e) { "Error deleting job search: $alertId for user $userId" }
+                failedIds.add(alertId)
+            }
+        }
+        
+        sendMessage(chatId, Messages.getDeletionResultMessage(deletedIds, failedIds))
+        sessionManager.resetToIdle(userId)
     }
 
     private suspend fun sendMessage(chatId: Long, message: String) {
