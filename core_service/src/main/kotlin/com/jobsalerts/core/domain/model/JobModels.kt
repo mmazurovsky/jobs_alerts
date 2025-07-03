@@ -1,5 +1,6 @@
 package com.jobsalerts.core.domain.model
 
+import com.fasterxml.jackson.annotation.JsonProperty
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -185,13 +186,13 @@ data class SentJobOut(
 data class SearchJobsParams(
         val keywords: String,
         val location: String,
-        val timePeriod: String,
-        val jobTypes: List<String> = emptyList(),
-        val remoteTypes: List<String> = emptyList(),
-        val filterText: String? = null,
-        val callbackUrl: String,
-        val jobSearchId: String? = null,
-        val userId: Long? = null
+        @JsonProperty("time_period") val timePeriod: String,
+        @JsonProperty("job_types") val jobTypes: List<String> = emptyList(),
+        @JsonProperty("remote_types") val remoteTypes: List<String> = emptyList(),
+        @JsonProperty("filter_text") val filterText: String? = null,
+        @JsonProperty("callback_url") val callbackUrl: String,
+        @JsonProperty("job_search_id") val jobSearchId: String? = null,
+        @JsonProperty("user_id") val userId: Long? = null
 )
 
 data class JobSearchRemove(val userId: Long, val searchId: String)
