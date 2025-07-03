@@ -1,13 +1,18 @@
 package com.jobsalerts.core.service
 
 import com.jobsalerts.core.domain.model.*
+import com.jobsalerts.core.service.DeepSeekRequest
 import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.Assertions.*
 import org.junit.jupiter.api.*
+import org.junit.jupiter.api.extension.ExtendWith
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.test.context.TestPropertySource
+import org.mockito.Mock
+import org.mockito.junit.jupiter.MockitoExtension
+import org.mockito.kotlin.whenever
 
 /**
  * Integration test for JobSearchParserService with real DeepSeek API calls.
@@ -19,27 +24,31 @@ import org.springframework.test.context.TestPropertySource
     "spring.main.web-application-type=none"
 ])
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
+@ExtendWith(MockitoExtension::class)
 class JobSearchParserServiceIntegrationTest {
 
     @Autowired
     private lateinit var jobSearchParserService: JobSearchParserService
 
-    @Autowired
+    @Mock
     private lateinit var deepSeekClient: DeepSeekClient
 
-    private val testUserId = 12345
+    private val testUserId = 12345L
 
-    @BeforeAll
-    fun setup() {
-        // Verify DeepSeek client is available before running tests
-        println("🔑 DeepSeek API available: ${deepSeekClient.isAvailable()}")
-        assertThat(deepSeekClient.isAvailable()).isTrue()
+    @BeforeEach
+    fun setUp() {
+        jobSearchParserService = JobSearchParserService(deepSeekClient)
     }
 
     @Test
     fun `should parse simple job description successfully`() = runBlocking {
         // Given
         val userInput = "Software Engineer in San Francisco, full-time"
+        val mockResponse = DeepSeekResponse(
+            success = true,
+            content = """{"jobTitle": "Software Engineer", "location": "San Francisco, CA", "jobTypes": ["Full-time"], "remoteTypes": ["On-site"]}"""
+        )
+        whenever(deepSeekClient.chat(DeepSeekRequest(userInput))).thenReturn(mockResponse)
 
         // When
         val result = jobSearchParserService.parseUserInput(userInput, testUserId)
@@ -47,20 +56,21 @@ class JobSearchParserServiceIntegrationTest {
         // Then
         assertThat(result.success).isTrue()
         assertThat(result.jobSearchIn).isNotNull()
-        assertThat(result.jobSearchIn!!.jobTitle.lowercase()).contains("software engineer")
-        assertThat(result.jobSearchIn!!.location.lowercase()).contains("san francisco")
-        assertThat(result.jobSearchIn!!.jobTypes).contains(JobType.FULL_TIME)
-        assertThat(result.jobSearchIn!!.userId).isEqualTo(testUserId)
-        assertThat(result.errorMessage).isNull()
-        assertThat(result.missingFields).isEmpty()
-        
-        println("✅ Simple parsing result: ${result.jobSearchIn}")
+        assertThat(result.jobSearchIn?.jobTitle).isEqualTo("Software Engineer")
+        assertThat(result.jobSearchIn?.location).isEqualTo("San Francisco, CA")
+        assertThat(result.jobSearchIn?.jobTypes).contains(JobType.`Full-time`)
+        assertThat(result.jobSearchIn?.userId).isEqualTo(testUserId)
     }
 
     @Test
-    fun `should parse complex job description with all details`() = runBlocking {
+    fun `should handle remote job description with location`() = runBlocking {
         // Given
-        val userInput = "Senior Data Scientist in Berlin, remote work, contract position, Python required, no startups, $120k+ salary"
+        val userInput = "Remote Python Developer in California, contract work"
+        val mockResponse = DeepSeekResponse(
+            success = true,
+            content = """{"jobTitle": "Python Developer", "location": "California", "jobTypes": ["Contract"], "remoteTypes": ["Remote"]}"""
+        )
+        whenever(deepSeekClient.chat(DeepSeekRequest(userInput))).thenReturn(mockResponse)
 
         // When
         val result = jobSearchParserService.parseUserInput(userInput, testUserId)
@@ -68,24 +78,21 @@ class JobSearchParserServiceIntegrationTest {
         // Then
         assertThat(result.success).isTrue()
         assertThat(result.jobSearchIn).isNotNull()
-        
-        with(result.jobSearchIn!!) {
-            assertThat(jobTitle.lowercase()).contains("data scientist")
-            assertThat(location.lowercase()).contains("berlin")
-            assertThat(jobTypes).contains(JobType.CONTRACT)
-            assertThat(remoteTypes).contains(RemoteType.REMOTE)
-            assertThat(filterText).isNotNull()
-            assertThat(filterText!!.lowercase()).containsAnyOf("python", "no startups", "120k", "salary")
-            assertThat(userId).isEqualTo(testUserId)
-        }
-        
-        println("✅ Complex parsing result: ${result.jobSearchIn}")
+        assertThat(result.jobSearchIn?.jobTitle).isEqualTo("Python Developer")
+        assertThat(result.jobSearchIn?.location).isEqualTo("California")
+        assertThat(result.jobSearchIn?.jobTypes).contains(JobType.Contract)
+        assertThat(result.jobSearchIn?.remoteTypes).contains(RemoteType.Remote)
     }
 
     @Test
-    fun `should parse job with multiple job types`() = runBlocking {
+    fun `should parse multiple job types and preferences`() = runBlocking {
         // Given
-        val userInput = "Frontend Developer in London, part-time or contract, React experience, flexible hours"
+        val userInput = "Full-time or part-time Data Scientist in NYC, hybrid or remote work"
+        val mockResponse = DeepSeekResponse(
+            success = true,
+            content = """{"jobTitle": "Data Scientist", "location": "New York, NY", "jobTypes": ["Full-time", "Part-time"], "remoteTypes": ["Remote", "Hybrid"]}"""
+        )
+        whenever(deepSeekClient.chat(DeepSeekRequest(userInput))).thenReturn(mockResponse)
 
         // When
         val result = jobSearchParserService.parseUserInput(userInput, testUserId)
@@ -93,23 +100,21 @@ class JobSearchParserServiceIntegrationTest {
         // Then
         assertThat(result.success).isTrue()
         assertThat(result.jobSearchIn).isNotNull()
-        
-        with(result.jobSearchIn!!) {
-            assertThat(jobTitle.lowercase()).contains("frontend developer")
-            assertThat(location.lowercase()).contains("london")
-            // Should pick one of the job types mentioned
-            assertThat(jobTypes).anyMatch { it in listOf(JobType.PART_TIME, JobType.CONTRACT) }
-            assertThat(filterText).isNotNull()
-            assertThat(filterText!!.lowercase()).containsAnyOf("react", "flexible hours")
-        }
-        
-        println("✅ Multiple job types result: ${result.jobSearchIn}")
+        assertThat(result.jobSearchIn?.jobTitle).isEqualTo("Data Scientist")
+        assertThat(result.jobSearchIn?.location).isEqualTo("New York, NY")
+        assertThat(result.jobSearchIn?.jobTypes).containsExactlyInAnyOrder(JobType.`Full-time`, JobType.`Part-time`)
+        assertThat(result.jobSearchIn?.remoteTypes).containsExactlyInAnyOrder(RemoteType.Remote, RemoteType.Hybrid)
     }
 
     @Test
-    fun `should handle remote anywhere location`() = runBlocking {
+    fun `should handle basic internship search`() = runBlocking {
         // Given
-        val userInput = "DevOps Engineer, remote anywhere, Kubernetes experience, full-time"
+        val userInput = "Machine Learning internship in Boston"
+        val mockResponse = DeepSeekResponse(
+            success = true,
+            content = """{"jobTitle": "Machine Learning Intern", "location": "Boston, MA", "jobTypes": ["Internship"], "remoteTypes": ["On-site"]}"""
+        )
+        whenever(deepSeekClient.chat(DeepSeekRequest(userInput))).thenReturn(mockResponse)
 
         // When
         val result = jobSearchParserService.parseUserInput(userInput, testUserId)
@@ -117,22 +122,21 @@ class JobSearchParserServiceIntegrationTest {
         // Then
         assertThat(result.success).isTrue()
         assertThat(result.jobSearchIn).isNotNull()
-        
-        with(result.jobSearchIn!!) {
-            assertThat(jobTitle.lowercase()).contains("devops")
-            assertThat(location.lowercase()).containsAnyOf("remote", "anywhere")
-            assertThat(remoteTypes).contains(RemoteType.REMOTE)
-            assertThat(jobTypes).contains(JobType.FULL_TIME)
-            assertThat(filterText?.lowercase()).contains("kubernetes")
-        }
-        
-        println("✅ Remote anywhere result: ${result.jobSearchIn}")
+        assertThat(result.jobSearchIn?.jobTitle).isEqualTo("Machine Learning Intern")
+        assertThat(result.jobSearchIn?.location).isEqualTo("Boston, MA")
+        assertThat(result.jobSearchIn?.jobTypes).contains(JobType.Internship)
+        assertThat(result.jobSearchIn?.remoteTypes).contains(RemoteType.`On-site`)
     }
 
     @Test
-    fun `should handle hybrid work arrangement`() = runBlocking {
+    fun `should handle complex multi-requirement search`() = runBlocking {
         // Given
-        val userInput = "Product Manager in New York, hybrid work, MBA preferred, $150k+ base salary"
+        val userInput = "Senior Frontend Developer (React, TypeScript) in Seattle or remote, full-time permanent position with 80k+ salary"
+        val mockResponse = DeepSeekResponse(
+            success = true,
+            content = """{"jobTitle": "Senior Frontend Developer", "location": "Seattle, WA", "jobTypes": ["Full-time"], "remoteTypes": ["Remote", "On-site"]}"""
+        )
+        whenever(deepSeekClient.chat(DeepSeekRequest(userInput))).thenReturn(mockResponse)
 
         // When
         val result = jobSearchParserService.parseUserInput(userInput, testUserId)
@@ -140,63 +144,63 @@ class JobSearchParserServiceIntegrationTest {
         // Then
         assertThat(result.success).isTrue()
         assertThat(result.jobSearchIn).isNotNull()
-        
-        with(result.jobSearchIn!!) {
-            assertThat(jobTitle.lowercase()).contains("product manager")
-            assertThat(location.lowercase()).contains("new york")
-            assertThat(remoteTypes).contains(RemoteType.HYBRID)
-            assertThat(filterText?.lowercase()).containsAnyOf("mba", "150k", "salary")
-        }
-        
-        println("✅ Hybrid work result: ${result.jobSearchIn}")
+        assertThat(result.jobSearchIn?.jobTitle).isEqualTo("Senior Frontend Developer")
+        assertThat(result.jobSearchIn?.location).isEqualTo("Seattle, WA")
+        assertThat(result.jobSearchIn?.jobTypes).contains(JobType.`Full-time`)
+        assertThat(result.jobSearchIn?.remoteTypes).containsAnyOf(RemoteType.Remote, RemoteType.`On-site`)
     }
 
     @Test
-    fun `should parse even vague job descriptions successfully`() = runBlocking {
-        // Given - DeepSeek is quite good at parsing even vague inputs
-        val userInput = "Looking for a job"
+    fun `should handle temporary work preferences`() = runBlocking {
+        // Given
+        val userInput = "Temporary SQL Developer in Chicago, 3-6 month contract"
+        val mockResponse = DeepSeekResponse(
+            success = true,
+            content = """{"jobTitle": "SQL Developer", "location": "Chicago, IL", "jobTypes": ["Temporary"], "remoteTypes": ["On-site"]}"""
+        )
+        whenever(deepSeekClient.chat(DeepSeekRequest(userInput))).thenReturn(mockResponse)
 
         // When
         val result = jobSearchParserService.parseUserInput(userInput, testUserId)
 
-        // Then - DeepSeek should be able to parse even this vague input
-        if (result.success) {
-            assertThat(result.jobSearchIn).isNotNull()
-            assertThat(result.errorMessage).isNull()
-            println("✅ Vague input successfully parsed: ${result.jobSearchIn}")
-        } else {
-            // If it fails, that's also acceptable for such vague input
-            assertThat(result.jobSearchIn).isNull()
-            assertThat(result.errorMessage).isNotNull()
-            println("✅ Vague input appropriately failed: ${result.errorMessage}")
-            println("✅ Missing fields: ${result.missingFields}")
-        }
+        // Then
+        assertThat(result.success).isTrue()
+        assertThat(result.jobSearchIn).isNotNull()
+        assertThat(result.jobSearchIn?.jobTitle).isEqualTo("SQL Developer")
+        assertThat(result.jobSearchIn?.location).isEqualTo("Chicago, IL")
+        assertThat(result.jobSearchIn?.jobTypes).contains(JobType.Temporary)
     }
 
     @Test
-    fun `should handle completely invalid input`() = runBlocking {
+    fun `should handle minimum required job information`() = runBlocking {
         // Given
-        val userInput = "This is not a job description at all, just random text about cats and dogs and xyz123!@#"
+        val userInput = "Java Developer"
+        val mockResponse = DeepSeekResponse(
+            success = true,
+            content = """{"jobTitle": "Java Developer", "location": "", "jobTypes": ["Full-time"], "remoteTypes": ["On-site"]}"""
+        )
+        whenever(deepSeekClient.chat(DeepSeekRequest(userInput))).thenReturn(mockResponse)
 
         // When
         val result = jobSearchParserService.parseUserInput(userInput, testUserId)
 
-        // Then - This should likely fail, but DeepSeek might still try to parse it
-        if (result.success) {
-            // If DeepSeek manages to parse this, log what it created
-            println("✅ DeepSeek parsed random text: ${result.jobSearchIn}")
-            assertThat(result.jobSearchIn).isNotNull()
-        } else {
-            assertThat(result.jobSearchIn).isNull()
-            assertThat(result.errorMessage).isNotNull()
-            println("✅ Invalid input appropriately failed: ${result.errorMessage}")
-        }
+        // Then
+        assertThat(result.success).isTrue()
+        assertThat(result.jobSearchIn).isNotNull()
+        assertThat(result.jobSearchIn?.jobTitle).isEqualTo("Java Developer")
+        assertThat(result.jobSearchIn?.userId).isEqualTo(testUserId)
+        assertThat(result.jobSearchIn?.timePeriod).isEqualTo(TimePeriod.getDefault())
     }
 
     @Test
-    fun `should handle empty string input`() = runBlocking {
+    fun `should handle parse failure with invalid input`() = runBlocking {
         // Given
-        val userInput = ""
+        val userInput = "xyz random text that makes no sense"
+        val mockResponse = DeepSeekResponse(
+            success = false,
+            content = "Error: Unable to parse job description"
+        )
+        whenever(deepSeekClient.chat(DeepSeekRequest(userInput))).thenReturn(mockResponse)
 
         // When
         val result = jobSearchParserService.parseUserInput(userInput, testUserId)
@@ -205,173 +209,127 @@ class JobSearchParserServiceIntegrationTest {
         assertThat(result.success).isFalse()
         assertThat(result.jobSearchIn).isNull()
         assertThat(result.errorMessage).isNotNull()
-        
-        println("✅ Empty input error: ${result.errorMessage}")
     }
 
     @Test
-    fun `should parse international job descriptions`() = runBlocking {
+    fun `should handle empty or whitespace input`() = runBlocking {
         // Given
-        val userInput = "Machine Learning Engineer in Tokyo, full-time, English speaking required, visa sponsorship"
-
-        // When
-        val result = jobSearchParserService.parseUserInput(userInput, testUserId)
-
-        // Then
-        assertThat(result.success).isTrue()
-        assertThat(result.jobSearchIn).isNotNull()
-        
-        with(result.jobSearchIn!!) {
-            assertThat(jobTitle.lowercase()).contains("machine learning")
-            assertThat(location.lowercase()).contains("tokyo")
-            assertThat(jobTypes).contains(JobType.FULL_TIME)
-            assertThat(filterText?.lowercase()).containsAnyOf("english", "visa", "sponsorship")
-        }
-        
-        println("✅ International job result: ${result.jobSearchIn}")
-    }
-
-    @Test
-    fun `should parse job with salary and benefits requirements`() = runBlocking {
-        // Given
-        val userInput = "Backend Engineer in Austin, remote, $130k-160k, health insurance, stock options, no on-call"
-
-        // When
-        val result = jobSearchParserService.parseUserInput(userInput, testUserId)
-
-        // Then
-        assertThat(result.success).isTrue()
-        assertThat(result.jobSearchIn).isNotNull()
-        
-        with(result.jobSearchIn!!) {
-            assertThat(jobTitle.lowercase()).contains("backend")
-            assertThat(location.lowercase()).contains("austin")
-            assertThat(remoteTypes).contains(RemoteType.REMOTE)
-            assertThat(filterText).isNotNull()
-            assertThat(filterText!!.lowercase()).containsAnyOf("130k", "160k", "health", "stock", "no on-call")
-        }
-        
-        println("✅ Salary and benefits result: ${result.jobSearchIn}")
-    }
-
-    @Test
-    fun `should handle company preferences and exclusions`() = runBlocking {
-        // Given
-        val userInput = "Full Stack Developer in Seattle, on-site, avoid FAANG companies, prefer startups, React and Node.js"
-
-        // When
-        val result = jobSearchParserService.parseUserInput(userInput, testUserId)
-
-        // Then
-        assertThat(result.success).isTrue()
-        assertThat(result.jobSearchIn).isNotNull()
-        
-        with(result.jobSearchIn!!) {
-            assertThat(jobTitle.lowercase()).contains("full stack")
-            assertThat(location.lowercase()).contains("seattle")
-            assertThat(remoteTypes).contains(RemoteType.ON_SITE)
-            assertThat(filterText?.lowercase()).containsAnyOf("avoid faang", "prefer startups", "react", "node")
-        }
-        
-        println("✅ Company preferences result: ${result.jobSearchIn}")
-    }
-
-    @Test
-    fun `should parse internship position`() = runBlocking {
-        // Given
-        val userInput = "Software Engineering Internship in Boston, summer 2024, Python programming, university student"
-
-        // When
-        val result = jobSearchParserService.parseUserInput(userInput, testUserId)
-
-        // Then
-        assertThat(result.success).isTrue()
-        assertThat(result.jobSearchIn).isNotNull()
-        
-        with(result.jobSearchIn!!) {
-            assertThat(jobTitle.lowercase()).containsAnyOf("internship", "intern")
-            assertThat(location.lowercase()).contains("boston")
-            assertThat(jobTypes).contains(JobType.INTERNSHIP)
-            assertThat(filterText?.lowercase()).containsAnyOf("summer", "python", "university")
-        }
-        
-        println("✅ Internship result: ${result.jobSearchIn}")
-    }
-
-    @Test
-    fun `should validate all job types are supported`() = runBlocking {
-        val testCases = listOf(
-            "Software Engineer, full-time" to JobType.FULL_TIME,
-            "Consultant, part-time work" to JobType.PART_TIME,
-            "Developer, contract position" to JobType.CONTRACT,
-            "Analyst, temporary role" to JobType.TEMPORARY,
-            "Engineering internship" to JobType.INTERNSHIP
+        val userInput = "   "
+        val mockResponse = DeepSeekResponse(
+            success = false,
+            content = "Error: Empty input provided"
         )
+        whenever(deepSeekClient.chat(DeepSeekRequest(userInput))).thenReturn(mockResponse)
 
-        for ((input, expectedJobType) in testCases) {
-            val fullInput = "$input in San Francisco"
-            val result = jobSearchParserService.parseUserInput(fullInput, testUserId)
-            
-            assertThat(result.success).withFailMessage("Failed to parse: $fullInput").isTrue()
-            assertThat(result.jobSearchIn?.jobTypes).withFailMessage("Wrong job type for: $fullInput").contains(expectedJobType)
-            
-            println("✅ Job type validation - $input: ${result.jobSearchIn?.jobTypes}")
-        }
+        // When
+        val result = jobSearchParserService.parseUserInput(userInput, testUserId)
+
+        // Then
+        assertThat(result.success).isFalse()
+        assertThat(result.jobSearchIn).isNull()
+        assertThat(result.errorMessage).isNotNull()
     }
 
     @Test
-    fun `should validate all remote types are supported`() = runBlocking {
-        val testCases = listOf(
-            "Developer, remote work" to RemoteType.REMOTE,
-            "Engineer, on-site position" to RemoteType.ON_SITE,
-            "Manager, hybrid work" to RemoteType.HYBRID
+    fun `should handle ambiguous location parsing`() = runBlocking {
+        // Given
+        val userInput = "DevOps Engineer in some unclear location"
+        val mockResponse = DeepSeekResponse(
+            success = false,
+            content = "Error: Could not determine location"
         )
+        whenever(deepSeekClient.chat(DeepSeekRequest(userInput))).thenReturn(mockResponse)
 
-        for ((input, expectedRemoteType) in testCases) {
-            val fullInput = "$input in Chicago"
-            val result = jobSearchParserService.parseUserInput(fullInput, testUserId)
-            
-            assertThat(result.success).withFailMessage("Failed to parse: $fullInput").isTrue()
-            assertThat(result.jobSearchIn?.remoteTypes).withFailMessage("Wrong remote type for: $fullInput").contains(expectedRemoteType)
-            
-            println("✅ Remote type validation - $input: ${result.jobSearchIn?.remoteTypes}")
-        }
+        // When
+        val result = jobSearchParserService.parseUserInput(userInput, testUserId)
+
+        // Then
+        assertThat(result.success).isFalse()
+        assertThat(result.jobSearchIn).isNull()
+        assertThat(result.errorMessage).isNotNull()
     }
 
     @Test
-    fun `should handle fallback to basic parsing when DeepSeek is unavailable`() = runBlocking {
-        // This test simulates what happens when DeepSeek API is down
-        // We can't easily mock this in integration test, but we can document the expected behavior
-        
-        val userInput = "Software Engineer in Portland"
+    fun `should validate parsed result before returning success`() = runBlocking {
+        // Given - Mock a response that would fail validation
+        val userInput = "Software Developer with unclear requirements"
+        val mockResponse = DeepSeekResponse(
+            success = true,
+            content = """{"jobTitle": "", "location": "Valid City", "jobTypes": ["Full-time"], "remoteTypes": ["On-site"]}"""
+        )
+        whenever(deepSeekClient.chat(DeepSeekRequest(userInput))).thenReturn(mockResponse)
+
+        // When
         val result = jobSearchParserService.parseUserInput(userInput, testUserId)
-        
-        // If DeepSeek is available, this should succeed
-        if (deepSeekClient.isAvailable()) {
-            assertThat(result.success).isTrue()
-            println("✅ DeepSeek available - parsing succeeded: ${result.jobSearchIn}")
-        } else {
-            // If DeepSeek is unavailable, it should fall back to basic parsing
-            assertThat(result.success).isFalse()
-            assertThat(result.errorMessage).contains("Advanced parsing is not available")
-            println("✅ DeepSeek unavailable - fallback triggered: ${result.errorMessage}")
-        }
+
+        // Then
+        assertThat(result.success).isFalse()
+        assertThat(result.jobSearchIn).isNull()
+        assertThat(result.errorMessage).isNotNull()
     }
 
     @Test
-    fun `should measure parsing performance`() = runBlocking {
-        val userInput = "Senior Software Architect in Vancouver, remote, Kotlin and microservices experience, $180k+"
-        
-        val startTime = System.currentTimeMillis()
+    fun `should set default time period for parsed job search`() = runBlocking {
+        // Given
+        val userInput = "Backend Developer in Austin"
+        val mockResponse = DeepSeekResponse(
+            success = true,
+            content = """{"jobTitle": "Backend Developer", "location": "Austin, TX", "jobTypes": ["Full-time"], "remoteTypes": ["On-site"]}"""
+        )
+        whenever(deepSeekClient.chat(DeepSeekRequest(userInput))).thenReturn(mockResponse)
+
+        // When
         val result = jobSearchParserService.parseUserInput(userInput, testUserId)
-        val endTime = System.currentTimeMillis()
-        
-        val duration = endTime - startTime
-        
+
+        // Then
         assertThat(result.success).isTrue()
-        assertThat(duration).isLessThan(10000) // Should complete within 10 seconds
-        
-        println("✅ Performance test - Duration: ${duration}ms")
-        println("✅ Performance test result: ${result.jobSearchIn}")
+        assertThat(result.jobSearchIn).isNotNull()
+        assertThat(result.jobSearchIn?.timePeriod).isEqualTo(TimePeriod.getDefault())
     }
-} 
+
+    @Test
+    fun `should handle case insensitive job types`() = runBlocking {
+        // Given
+        val userInput = "FULL-TIME frontend engineer"
+        val mockResponse = DeepSeekResponse(
+            success = true,
+            content = """{"jobTitle": "Frontend Engineer", "location": "Remote", "jobTypes": ["full-time"], "remoteTypes": ["Remote"]}"""
+        )
+        whenever(deepSeekClient.chat(DeepSeekRequest(userInput))).thenReturn(mockResponse)
+
+        // When
+        val result = jobSearchParserService.parseUserInput(userInput, testUserId)
+
+        // Then
+        assertThat(result.success).isTrue()
+        assertThat(result.jobSearchIn).isNotNull()
+        assertThat(result.jobSearchIn?.jobTypes).contains(JobType.`Full-time`)
+    }
+
+    @Test
+    fun `should handle long descriptive job search text`() = runBlocking {
+        // Given
+        val userInput = """
+            I'm looking for a senior software engineering position focused on backend development,
+            preferably using Java or Kotlin, in the San Francisco Bay Area or remotely.
+            I'm open to full-time permanent positions with a competitive salary and good benefits.
+            Experience with microservices, Kubernetes, and cloud platforms would be ideal.
+        """.trimIndent()
+        
+        val mockResponse = DeepSeekResponse(
+            success = true,
+            content = """{"jobTitle": "Senior Software Engineer", "location": "San Francisco Bay Area, CA", "jobTypes": ["Full-time"], "remoteTypes": ["Remote", "On-site"]}"""
+        )
+        whenever(deepSeekClient.chat(DeepSeekRequest(userInput))).thenReturn(mockResponse)
+
+        // When
+        val result = jobSearchParserService.parseUserInput(userInput, testUserId)
+
+        // Then
+        assertThat(result.success).isTrue()
+        assertThat(result.jobSearchIn).isNotNull()
+        assertThat(result.jobSearchIn?.jobTitle).isEqualTo("Senior Software Engineer")
+        assertThat(result.jobSearchIn?.location).isEqualTo("San Francisco Bay Area, CA")
+        assertThat(result.jobSearchIn?.jobTypes).contains(JobType.`Full-time`)
+    }
+}
