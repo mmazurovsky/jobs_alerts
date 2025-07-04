@@ -1,26 +1,17 @@
 #!/bin/bash
-
-# Deploy script for Jobs Alerts Core Service
-
 set -e
 
-# Load environment variables
-if [ -f ../.env ]; then
-    export $(cat ../.env | grep -v '^#' | xargs)
-fi
+ENV=prod
 
-# Build the Docker image
-echo "Building Docker image..."
-docker-compose build
+export ENV
+export DOCKER_BUILDKIT=1
 
-# Stop existing container if running
-echo "Stopping existing container..."
-docker-compose down || true
+echo "Building and pushing main_project from monorepo root..."
 
-# Start the new container
-echo "Starting new container..."
-docker-compose up -d
+# Build with cache from the latest image
+docker compose build --build-arg BUILDKIT_INLINE_CACHE=1 main_project
 
-# Show logs
-echo "Container started. Showing logs..."
-docker-compose logs -f 
+# Push the image to the registry
+docker compose push main_project
+
+echo "$ENV main_project build and push completed successfully."

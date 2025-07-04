@@ -21,40 +21,9 @@ object Messages {
     const val CMD_EDIT_ALERT = "/edit_alert"
     const val CMD_DELETE_ALERT = "/delete_alert"
     const val CMD_SEARCH_NOW = "/search_now"
-    
-    // === Common Actions ===
-    const val ACTION_CANCEL = CMD_CANCEL
+
     const val CANCEL_MESSAGE = "❌ Operation cancelled."
     const val USE_CANCEL_TO_ABORT = "Use $CMD_CANCEL to abort this operation."
-    
-    // === Common Responses ===
-    const val RESPONSE_YES = "yes"
-    const val RESPONSE_NO = "no"
-    const val CONFIRM_YES = "Reply '**yes**' to confirm"
-    const val CONFIRM_NO = "Reply '**no**' to cancel"
-    
-    // === Icons and Emojis ===
-    const val ICON_ALERT = "🔔"
-    const val ICON_SEARCH = "🔍"
-    const val ICON_DELETE = "🗑️"
-    const val ICON_EDIT = "✏️"
-    const val ICON_LIST = "📋"
-    const val ICON_SUCCESS = "✅"
-    const val ICON_ERROR = "❌"
-    const val ICON_WARNING = "⚠️"
-    const val ICON_LOADING = "🔄"
-    const val ICON_TIME = "⏰"
-    const val ICON_LOCATION = "📍"
-    const val ICON_JOB = "💼"
-    const val ICON_REMOTE = "🏠"
-    const val ICON_FILTER = "🔍"
-    const val ICON_ID = "🆔"
-    const val ICON_LINK = "🔗"
-    const val ICON_ROBOT = "🤖"
-    const val ICON_MENU = "📋"
-    const val ICON_HELP = "📖"
-    const val ICON_START = "🚀"
-    const val ICON_NOTE = "💡"
     
     // === Error Messages ===
     const val ERROR_GENERAL = "❌ An error occurred while processing your request. Please try again or use $CMD_CANCEL to abort."
@@ -70,81 +39,72 @@ object Messages {
     const val ERROR_DISPLAY_MENU = "❌ Error displaying menu. Please try again later."
     
     // === Success Messages ===
-    const val SUCCESS_PARSED = "✅ **Job search parsed successfully!**"
-    const val SUCCESS_ALERT_PARSED = "✅ **Job alert parsed successfully!**"
-    const val SUCCESS_UPDATED_PARSED = "✅ **Updated job search parsed successfully!**"
+    const val SUCCESS_PARSED = "✅ <b>Job search parsed successfully!</b>"
+    const val SUCCESS_ALERT_PARSED = "✅ <b>Job alert parsed successfully!</b>"
+    const val SUCCESS_UPDATED_PARSED = "✅ <b>Updated job search parsed successfully!</b>"
     
     // === Headers ===
-    const val HEADER_WELCOME = "🤖 **Welcome to Job Search Alerts Bot powered by AI for prompt-based filtering! I will help you to become the first applicant for jobs that match your specific prompt.**"
-    const val HEADER_MAIN_MENU = "📋 **Main Menu**"
-    const val HEADER_HELP = "📖 **Job Alerts Bot - Help**"
-    const val HEADER_CREATE_ALERT = "🔔 **Creating a new job alert**"
-    const val HEADER_IMMEDIATE_SEARCH = "🔍 **Running an immediate job search**"
-    const val HEADER_DELETE_ALERT = "🗑️ **Delete Job Alert**"
-    const val HEADER_EDIT_ALERT = "✏️ **Edit Job Alert**"
-    const val HEADER_YOUR_ALERTS = "📋 **Your Active Job Alerts**"
-    const val HEADER_DELETE_CONFIRMATION = "🗑️ **Delete Alert Confirmation**"
-    const val HEADER_INVALID_ALERT_ID = "❌ **Invalid Alert ID**"
-    const val HEADER_INVALID_ALERT_IDS = "❌ **Invalid Alert ID(s)**"
-    const val HEADER_JOB_SEARCH_DETAILS = "🔍 **Job Search Details:**"
-    const val HEADER_EDITING_ALERT = "✏️ **Editing Alert:**"
-    const val HEADER_CURRENT_ALERT_DETAILS = "**Current Alert Details:**"
-    const val HEADER_AVAILABLE_ACTIONS = "**Possible Actions:**"
-    const val HEADER_REQUIRED_FIELDS = "**Required Fields:**"
-    const val HEADER_OPTIONAL_FIELDS = "**Optional Fields:**"
-    const val HEADER_EXAMPLES = "**Examples:**"
-    const val HEADER_EXAMPLE_DESCRIPTIONS = "**Example Descriptions:**"
+    const val HEADER_WELCOME = "🤖 Welcome to Job Search Alerts Bot powered by AI for prompt-based filtering! I will help you to become the first applicant for jobs that match your specific prompt."
+    const val HEADER_MAIN_MENU = "📋 <b>Main Menu</b>"
+    const val HEADER_HELP = "📖 <b>Job Alerts Bot - Help</b>"
+    const val HEADER_CREATE_ALERT = "🔔 <b>Creating a new job alert</b>"
+    const val HEADER_IMMEDIATE_SEARCH = "🔍 <b>Running an immediate job search</b>"
+    const val HEADER_DELETE_ALERT = "🗑️ <b>Delete Job Alert</b>"
+    const val HEADER_EDIT_ALERT = "✏️ <b>Edit Job Alert</b>"
+    const val HEADER_YOUR_ALERTS = "📋 <b>Your Active Job Alerts</b>"
+    const val HEADER_DELETE_CONFIRMATION = "🗑️ <b>Delete Alert Confirmation</b>"
+    const val HEADER_INVALID_ALERT_ID = "❌ <b>Invalid Alert ID</b>"
+    const val HEADER_INVALID_ALERT_IDS = "❌ <b>Invalid Alert ID(s)</b>"
+    const val HEADER_JOB_SEARCH_DETAILS = "🔍 <b>Job Search Details:</b>"
+    const val HEADER_EDITING_ALERT = "✏️ <b>Editing Alert:</b>"
+    const val HEADER_CURRENT_ALERT_DETAILS = "<b>Current Alert Details:</b>"
+    const val HEADER_AVAILABLE_ACTIONS = "<b>Possible Actions:</b>"
+    const val HEADER_REQUIRED_FIELDS = "<b>Required Fields:</b>"
+    const val HEADER_OPTIONAL_FIELDS = "<b>Optional Fields:</b>"
+    const val HEADER_EXAMPLES = "<b>Examples:</b>"
+    const val HEADER_EXAMPLE_DESCRIPTIONS = "<b>Example Descriptions:</b>"
     
     // === Section Dividers ===
     const val DIVIDER_40 = "────────────────────────────────────────"
     
     // === Structured Approach Template ===
     const val STRUCTURED_APPROACH_HEADER = "Let's try a structured approach. Please provide:"
-    const val STRUCTURED_JOB_TITLE = "**Job Title:** [What position are you looking for?]"
-    const val STRUCTURED_LOCATION = "**Location:** [Where do you want to work?]"
-    const val STRUCTURED_JOB_TYPE = "**Job Type:** [Full-time, Part-time, Contract, etc.]"
-    const val STRUCTURED_REMOTE_TYPE = "**Remote Type:** [Remote, On-site, Hybrid]"
-    const val STRUCTURED_REQUIREMENTS = "**Additional Requirements:** [Any other requirements or keywords]"
+    const val STRUCTURED_JOB_TITLE = "<b>Job Title:</b> [What position are you looking for?]"
+    const val STRUCTURED_LOCATION = "<b>Location:</b> [Where do you want to work?]"
+    const val STRUCTURED_JOB_TYPE = "<b>Job Type:</b> [Full-time, Part-time, Contract, etc.]"
+    const val STRUCTURED_REMOTE_TYPE = "<b>Remote Type:</b> [Remote, On-site, Hybrid]"
+    const val STRUCTURED_REQUIREMENTS = "<b>Additional Requirements:</b> [Any other requirements or keywords]"
     
     // === Common Instructions ===
-    const val INSTRUCTION_IS_CORRECT = "**Is this correct?**"
+    const val INSTRUCTION_IS_CORRECT = "<b>Is this correct?</b>"
     const val INSTRUCTION_RETRY_DESCRIPTION = "Please try again with a clearer description:"
     const val INSTRUCTION_PROVIDE_VALID_ID = "Please provide a valid alert ID or use $CMD_LIST_ALERTS to see your alerts."
     const val INSTRUCTION_USE_LIST_ALERTS = "Use $CMD_LIST_ALERTS to see your alerts or $CMD_CANCEL to abort."
     
     // === Notes ===
-    const val NOTE_RECURRING_ALERT = "💡 **Note:** This will create a recurring alert that searches for jobs automatically!"
-    const val NOTE_ONE_TIME_SEARCH = "💡 **Note:** This is a one-time search that will start executing immediately!"
+    const val NOTE_RECURRING_ALERT = "💡 <b>Note:</b> This will create a recurring alert that searches for jobs automatically!"
+    const val NOTE_ONE_TIME_SEARCH = "💡 <b>Note:</b> This is a one-time search that will start executing immediately!"
     const val NOTE_RESULTS_NOTIFICATION = "🔔 You'll receive notifications when new jobs matching your criteria are found."
-    const val NOTE_CANNOT_UNDO = "⚠️ **Warning:** This action cannot be undone!"
+    const val NOTE_CANNOT_UNDO = "⚠️ <b>Warning:</b> This action cannot be undone!"
     const val NOTE_SEARCH_RUNNING = "⏳ Your job search is now running. Results will be sent to you once the search is complete in few minutes."
     const val NOTE_UPDATED_ALERT_ACTIVE = "🔔 Your updated alert is now active and will search for jobs with the new criteria."
     
     // === Menu Items ===
-    const val MENU_SEARCH_NOW = "$CMD_SEARCH_NOW - 🔍 Search jobs immediately with AI"
-    const val MENU_CREATE_ALERT = "$CMD_CREATE_ALERT - 🔔 Create new job alert with AI"
-    const val MENU_LIST_ALERTS = "$CMD_LIST_ALERTS - 📋 View your created alerts"
-    const val MENU_EDIT_ALERT = "$CMD_EDIT_ALERT - ✏️ Edit a created alert"
-    const val MENU_DELETE_ALERT = "$CMD_DELETE_ALERT - 🗑️ Delete an alert"
+    const val MENU_SEARCH_NOW = "$CMD_SEARCH_NOW - Search jobs immediately with AI"
+    const val MENU_CREATE_ALERT = "$CMD_CREATE_ALERT - Create new job alert with AI"
+    const val MENU_LIST_ALERTS = "$CMD_LIST_ALERTS - View your created alerts"
+    const val MENU_EDIT_ALERT = "$CMD_EDIT_ALERT - Edit a created alert"
+    const val MENU_DELETE_ALERT = "$CMD_DELETE_ALERT - Delete an alert"
 
-    const val MENU_HELP = "$CMD_HELP - 📖 Detailed help"
-    const val MENU_START = "$CMD_START - 🏠 Welcome message"
-    
-    // === Command Examples ===
-    // const val EXAMPLE_EDIT_ALERT = "$CMD_EDIT_ALERT [ID] - Edit a specific alert"
-    // const val EXAMPLE_DELETE_ALERT = "$CMD_DELETE_ALERT [ID] - Delete a specific alert"
-    // const val EXAMPLE_CREATE_ALERT = "$CMD_CREATE_ALERT - Create a new alert"
-    // const val EXAMPLE_SEARCH_NOW = "$CMD_SEARCH_NOW - Run an immediate search"
-    // const val EXAMPLE_LIST_ALERTS = "$CMD_LIST_ALERTS - See all your alerts"
-    const val EXAMPLE_MENU = "$CMD_MENU for other options"
+    const val MENU_HELP = "$CMD_HELP - Detailed help"
     
     // === Loading Messages ===
     const val ANALYZING_DESCRIPTION = "🔍 Analyzing your job alert description..."
     const val ANALYZING_SEARCH = "🔍 Analyzing your job search description..."
     const val ANALYZING_UPDATE = "🔍 Analyzing your updated job search..."
-    const val CREATING_ALERT = "🔔 **Creating your job alert...**"
-    const val UPDATING_ALERT = "✏️ **Updating your job alert...**"
-    const val STARTING_SEARCH = "🚀 **Starting your job search...**"
+    const val CREATING_ALERT = "🔔 <b>Creating your job alert...</b>"
+    const val UPDATING_ALERT = "✏️ <b>Updating your job alert...</b>"
+    const val STARTING_SEARCH = "🚀 <b>Starting your job search...</b>"
     
     // ================== DYNAMIC METHODS ==================
     
@@ -162,7 +122,6 @@ object Messages {
         appendLine(MENU_EDIT_ALERT)
         appendLine(MENU_DELETE_ALERT)
         appendLine("$CMD_HELP - Show detailed help")
-        appendLine("$CMD_CANCEL - Cancel current operation")
         appendLine()
         appendLine("Type any command like $CMD_CREATE_ALERT or $CMD_SEARCH_NOW to get started!")
     }
@@ -172,17 +131,17 @@ object Messages {
         appendLine()
         appendLine("Choose what you'd like to do:")
         appendLine()
-        appendLine("**🔍 Search Jobs Immediately:**")
+        appendLine("<b>🔍 Search Jobs Immediately:</b>")
         appendLine("(Search without creating recurring alert)")
         appendLine(MENU_SEARCH_NOW)
         appendLine()
-        appendLine("**🔔 Job Alert Management:**")
+        appendLine("<b>🔔 Job Alert Management:</b>")
         appendLine(MENU_CREATE_ALERT)
         appendLine(MENU_LIST_ALERTS)
         appendLine(MENU_EDIT_ALERT)
         appendLine(MENU_DELETE_ALERT)
         appendLine()
-        appendLine("**📖 Help & Info:**")
+        appendLine("<b>📖 Help & Info:</b>")
         appendLine(MENU_HELP)
         appendLine()
         appendLine("Just use any command to get started!")
@@ -191,52 +150,24 @@ object Messages {
     fun getHelpMessage(): String = buildString {
         appendLine(HEADER_HELP)
         appendLine()
-        appendLine("**Main Commands:**")
+        appendLine("<b>Main Commands:</b>")
         appendLine("$CMD_START - Welcome message and command overview")
         appendLine("$CMD_MENU - Show main menu with quick options")
         appendLine("$CMD_HELP - Show this help message")
         appendLine("$CMD_CANCEL - Cancel current operation")
         appendLine()
-        appendLine("**Job Alert Management:**")
-        appendLine("$CMD_CREATE_ALERT - 🔔 Create a new job search alert")
-        appendLine("$CMD_LIST_ALERTS - 📋 View all your active job alerts")
-        appendLine("$CMD_EDIT_ALERT - ✏️ Modify an existing job alert")
-        appendLine("$CMD_DELETE_ALERT - 🗑️ Remove a job alert")
+        appendLine("<b>Job Alert Management:</b>")
+        appendLine("$CMD_CREATE_ALERT - Create a new job search alert")
+        appendLine("$CMD_LIST_ALERTS - View all your active job alerts")
+        appendLine("$CMD_EDIT_ALERT - Modify an existing job alert")
+        appendLine("$CMD_DELETE_ALERT - Remove a job alert")
         appendLine()
-        appendLine("**Job Search:**")
-        appendLine("$CMD_SEARCH_NOW - 🔍 Run an immediate one-time job search")
-        appendLine()
-        appendLine("**How to use:**")
-        appendLine("• Simply type the command (e.g., $CMD_CREATE_ALERT)")
-        appendLine("• Add parameters if needed (e.g., $CMD_EDIT_ALERT 123)")
-        appendLine("• Follow the prompts for interactive setup")
-        appendLine()
-        appendLine("**Examples:**")
-        appendLine("• $CMD_CREATE_ALERT - Start creating a new alert")
-        appendLine("• $CMD_LIST_ALERTS - See all your alerts")
-        appendLine("• $CMD_SEARCH_NOW python berlin - Search for Python jobs in Berlin")
-        appendLine("• $CMD_DELETE_ALERT 123 - Delete alert with ID 123")
-        appendLine()
-        appendLine("**Job Search Format:**")
+        appendLine("<b>Job Search Format:</b>")
         appendLine("When creating or editing alerts, you can describe your job requirements in natural language:")
+        appendLine("\"Looking for Senior Python Developer job in Berlin, remote only, no requirement to speak Italian, no startups\"")
         appendLine()
-        appendLine("\"Looking for Senior Python Developer in Berlin, remote work possible, salary 80k+, no startups\"")
-        appendLine()
-        appendLine("The system will automatically parse:")
-        appendLine("• Job Title: Senior Python Developer")
-        appendLine("• Location: Berlin")
-        appendLine("• Remote: Yes")
-        appendLine("• Salary: 80k+")
-        appendLine("• Filter: No startups")
-        appendLine()
-        appendLine("**Alert Frequency:**")
-        appendLine("You can specify how often to search:")
-        appendLine("• Daily")
-        appendLine("• Weekly")
-        appendLine("• Monthly")
-        appendLine()
-        appendLine("**Need More Help?**")
-        appendLine("If you encounter any issues or need assistance, feel free to reach out or try $CMD_MENU for quick access to all functions!")
+        appendLine("<b>Need More Help?</b>")
+        appendLine("If you encounter any issues or need assistance, feel free to contact support at <a href=\"mailto:job.search.ai.bot@gmail.com\">job.search.ai.bot@gmail.com</a>")
     }
     
     // === Job Alert Creation Messages ===
@@ -263,8 +194,8 @@ object Messages {
         append(jobSearch.toHumanReadableString())
         appendLine()
         appendLine(INSTRUCTION_IS_CORRECT)
-        appendLine("• Reply '**yes**' to create the alert")
-        appendLine("• Reply '**no**' to modify your alert")
+        appendLine("• Reply '<b>yes</b>' to create the alert")
+        appendLine("• Reply '<b>no</b>' to modify your alert")
         appendLine("• Use $CMD_CANCEL to abort")
     }
     
@@ -274,32 +205,32 @@ object Messages {
         append(jobSearch.toHumanReadableString())
         appendLine()
         appendLine(INSTRUCTION_IS_CORRECT)
-        appendLine("• Reply '**yes**' to proceed with the search")
-        appendLine("• Reply '**no**' to modify your search")
+        appendLine("• Reply '<b>yes</b>' to proceed with the search")
+        appendLine("• Reply '<b>no</b>' to modify your search")
         appendLine("• Use $CMD_CANCEL to abort")
     }
     
     fun getEditConfirmation(alertId: String, jobSearch: JobSearchIn): String = buildString {
         appendLine(SUCCESS_UPDATED_PARSED)
         appendLine()
-        appendLine("**Alert ID:** $alertId")
+        appendLine("<b>Alert ID:</b> $alertId")
         appendLine()
         append(jobSearch.toHumanReadableString())
         appendLine()
         appendLine(INSTRUCTION_IS_CORRECT)
-        appendLine("• Reply '**yes**' to save the changes")
-        appendLine("• Reply '**no**' to modify your criteria")
+        appendLine("• Reply '<b>yes</b>' to save the changes")
+        appendLine("• Reply '<b>no</b>' to modify your criteria")
         appendLine("• Use $CMD_CANCEL to abort")
     }
     
     // === Success Messages ===
     fun getAlertCreatedSuccess(alertId: String, jobSearch: JobSearchIn): String = buildString {
-        appendLine("✅ **Job alert created successfully!**")
+        appendLine("✅ <b>Job alert created successfully!</b>")
         appendLine()
-        appendLine("$ICON_ID **Alert ID:** $alertId")
-        appendLine("🔍 **Searching for:** ${jobSearch.jobTitle}")
-        appendLine("📍 **Location:** ${jobSearch.location}")
-        appendLine("⏰ **Frequency:** ${jobSearch.timePeriod.displayName}")
+        appendLine("\uD83C\uDD94 <b>Alert ID:</b> $alertId")
+        appendLine("🔍 <b>Searching for:</b> ${jobSearch.jobTitle}")
+        appendLine("📍 <b>Location:</b> ${jobSearch.location}")
+        appendLine("⏰ <b>Frequency:</b> ${jobSearch.timePeriod.displayName}")
         appendLine()
         appendLine(NOTE_RESULTS_NOTIFICATION)
         appendLine()
@@ -307,11 +238,11 @@ object Messages {
     }
     
     fun getSearchInitiatedSuccess(searchId: String, jobSearch: JobSearchIn): String = buildString {
-        appendLine("✅ **Job search initiated successfully!**")
+        appendLine("✅ <b>Job search initiated successfully!</b>")
         appendLine()
-        appendLine("📋 **Search ID:** $searchId")
-        appendLine("🔍 **Searching for:** ${jobSearch.jobTitle}")
-        appendLine("📍 **Location:** ${jobSearch.location}")
+        appendLine("📋 <b>Search ID:</b> $searchId")
+        appendLine("🔍 <b>Searching for:</b> ${jobSearch.jobTitle}")
+        appendLine("📍 <b>Location:</b> ${jobSearch.location}")
         appendLine()
         appendLine(NOTE_SEARCH_RUNNING)
         appendLine()
@@ -319,12 +250,12 @@ object Messages {
     }
     
     fun getAlertUpdatedSuccess(alertId: String, jobSearch: JobSearchIn): String = buildString {
-        appendLine("✅ **Job alert updated successfully!**")
+        appendLine("✅ <b>Job alert updated successfully!</b>")
         appendLine()
-        appendLine("📋 **Alert ID:** $alertId")
-        appendLine("🔍 **Searching for:** ${jobSearch.jobTitle}")
-        appendLine("📍 **Location:** ${jobSearch.location}")
-        appendLine("⏰ **Frequency:** ${jobSearch.timePeriod.displayName}")
+        appendLine("📋 <b>Alert ID:</b> $alertId")
+        appendLine("🔍 <b>Searching for:</b> ${jobSearch.jobTitle}")
+        appendLine("📍 <b>Location:</b> ${jobSearch.location}")
+        appendLine("⏰ <b>Frequency:</b> ${jobSearch.timePeriod.displayName}")
         appendLine()
         appendLine(NOTE_UPDATED_ALERT_ACTIVE)
         appendLine()
@@ -337,7 +268,7 @@ object Messages {
         appendLine()
         appendLine("You don't have any active job alerts to delete.")
         appendLine()
-        appendLine("**Get started:**")
+        appendLine("<b>Get started:</b>")
         appendLine("$CMD_CREATE_ALERT - Create your first job alert")
         appendLine("$CMD_HELP - See all available commands")
     }
@@ -347,7 +278,7 @@ object Messages {
         appendLine()
         appendLine("Which alert(s) would you like to delete? Please provide the alert ID(s).")
         appendLine()
-        appendLine("**Your Active Job Alerts:**")
+        appendLine("<b>Your Active Job Alerts:</b>")
         appendLine()
         
         userSearches.forEach { jobSearch ->
@@ -357,8 +288,8 @@ object Messages {
         }
         
         appendLine(HEADER_EXAMPLES)
-        appendLine("• **123** - Delete alert with ID 123")
-        appendLine("• **123,456** - Delete alerts with IDs 123 and 456")
+        appendLine("• <b>123</b> - Delete alert with ID 123")
+        appendLine("• <b>123,456</b> - Delete alerts with IDs 123 and 456")
         appendLine()
         appendLine(USE_CANCEL_TO_ABORT)
     }
@@ -367,16 +298,16 @@ object Messages {
         appendLine(HEADER_DELETE_CONFIRMATION)
         appendLine()
         if (validAlertIds.size == 1) {
-            appendLine("Are you sure you want to delete alert: **${validAlertIds[0]}**?")
+            appendLine("Are you sure you want to delete alert: <b>${validAlertIds[0]}</b>?")
         } else {
             appendLine("Are you sure you want to delete these ${validAlertIds.size} alerts?")
-            validAlertIds.forEach { appendLine("• **$it**") }
+            validAlertIds.forEach { appendLine("• <b>$it</b>") }
         }
         appendLine()
         appendLine(NOTE_CANNOT_UNDO)
         appendLine()
-        appendLine("• Reply '**yes**' to confirm deletion")
-        appendLine("• Reply '**no**' to cancel")
+        appendLine("• Reply '<b>yes</b>' to confirm deletion")
+        appendLine("• Reply '<b>no</b>' to cancel")
         appendLine("• Use $CMD_CANCEL to abort this operation")
     }
     
@@ -398,16 +329,16 @@ object Messages {
     fun getDeletionResultMessage(deletedIds: List<String>, failedIds: List<String>): String = buildString {
         if (deletedIds.isNotEmpty()) {
             if (deletedIds.size == 1) {
-                appendLine("✅ **Alert ${deletedIds[0]} has been deleted successfully.**")
+                appendLine("✅ <b>Alert ${deletedIds[0]} has been deleted successfully.</b>")
             } else {
-                appendLine("✅ **${deletedIds.size} alerts have been deleted successfully:**")
+                appendLine("✅ <b>${deletedIds.size} alerts have been deleted successfully:</b>")
                 deletedIds.forEach { appendLine("• $it") }
             }
         }
         
         if (failedIds.isNotEmpty()) {
             appendLine()
-            appendLine("❌ **Failed to delete the following alert(s):**")
+            appendLine("❌ <b>Failed to delete the following alert(s):</b>")
             failedIds.forEach { appendLine("• $it") }
             appendLine("Please try again later or contact support.")
         }
@@ -419,7 +350,7 @@ object Messages {
         appendLine()
         appendLine("You don't have any active job alerts to edit.")
         appendLine()
-        appendLine("**Get started:**")
+        appendLine("<b>Get started:</b>")
         appendLine("$CMD_CREATE_ALERT - Create your first job alert")
         appendLine("$CMD_HELP - See all available commands")
     }
@@ -429,7 +360,7 @@ object Messages {
         appendLine()
         appendLine("Which alert would you like to edit? Please provide the alert ID.")
         appendLine()
-        appendLine("**Your Active Job Alerts:**")
+        appendLine("<b>Your Active Job Alerts:</b>")
         appendLine()
         
         userSearches.forEach { jobSearch ->
@@ -438,7 +369,7 @@ object Messages {
             appendLine()
         }
         
-        appendLine("**Example:** **123** (just the ID number)")
+        appendLine("<b>Example:</b> <b>123</b> (just the ID number)")
         appendLine()
         appendLine(USE_CANCEL_TO_ABORT)
     }
@@ -452,7 +383,7 @@ object Messages {
     }
     
     fun getEditAlertDetailsMessage(alertId: String, existingAlert: JobSearchOut): String = buildString {
-        appendLine("$HEADER_EDITING_ALERT $alertId**")
+        appendLine("$HEADER_EDITING_ALERT $alertId</b>")
         appendLine()
         appendLine(HEADER_CURRENT_ALERT_DETAILS)
         appendLine()
@@ -472,7 +403,7 @@ object Messages {
         appendLine()
         appendLine("You don't have any active job alerts yet.")
         appendLine()
-        appendLine("**Get started:**")
+        appendLine("<b>Get started:</b>")
         appendLine("$CMD_CREATE_ALERT - Create your first job alert")
         appendLine("$CMD_HELP - See all available commands")
         appendLine()
@@ -496,19 +427,19 @@ object Messages {
     
     // === Retry and Error Messages ===
     fun getRetryJobSearchMessage(): String = buildString {
-        appendLine("📝 **Let's modify your job search.**")
+        appendLine("📝 <b>Let's modify your job search.</b>")
         appendLine()
         append(JobSearchIn.getFormattingInstructions())
     }
     
     fun getRetryJobAlertMessage(): String = buildString {
-        appendLine("📝 **Let's modify your job alert.**")
+        appendLine("📝 <b>Let's modify your job alert.</b>")
         appendLine()
         append(JobSearchIn.getFormattingInstructions())
     }
     
     fun getStructuredApproachMessage(): String = buildString {
-        appendLine("❌ **I'm having trouble understanding your job search description.**")
+        appendLine("❌ <b>I'm having trouble understanding your job search description.</b>")
         appendLine()
         appendLine(STRUCTURED_APPROACH_HEADER)
         appendLine()
@@ -522,10 +453,10 @@ object Messages {
     }
     
     fun getParseErrorMessage(parseResult: JobSearchParseResult): String = buildString {
-        appendLine("❌ **${parseResult.errorMessage}**")
+        appendLine("❌ <b>${parseResult.errorMessage}</b>")
         appendLine()
         if (parseResult.missingFields.isNotEmpty()) {
-            appendLine("**Missing information:** ${parseResult.missingFields.joinToString(", ")}")
+            appendLine("<b>Missing information:</b> ${parseResult.missingFields.joinToString(", ")}")
             appendLine()
         }
         appendLine(INSTRUCTION_RETRY_DESCRIPTION)
@@ -539,10 +470,10 @@ object Messages {
     }
     
     fun getParseErrorMessageForAlert(parseResult: JobSearchParseResult): String = buildString {
-        appendLine("❌ **${parseResult.errorMessage}**")
+        appendLine("❌ <b>${parseResult.errorMessage}</b>")
         appendLine()
         if (parseResult.missingFields.isNotEmpty()) {
-            appendLine("**Missing information:** ${parseResult.missingFields.joinToString(", ")}")
+            appendLine("<b>Missing information:</b> ${parseResult.missingFields.joinToString(", ")}")
             appendLine()
         }
         appendLine(INSTRUCTION_RETRY_DESCRIPTION)
@@ -557,7 +488,7 @@ object Messages {
     
     // === Job Results Messages ===
     fun getJobResultsMessage(jobs: List<FullJobListing>): String = buildString {
-        appendLine("🔔 **New job listings found for your search:**")
+        appendLine("🔔 <b>New job listings found for your search:</b>")
         appendLine()
         jobs.forEach { job ->
             appendLine(job.toMessage())
@@ -567,11 +498,11 @@ object Messages {
     
     // === Common Confirmation Responses ===
     fun getConfirmationInstruction(actionType: String): String = when (actionType) {
-        "create" -> "Please respond with '**yes**' to create the alert, '**no**' to edit description again, or $CMD_CANCEL to abort."
-        "delete" -> "Please respond with '**yes**' to delete the alert(s), '**no**' to cancel, or $CMD_CANCEL to abort."
-        "edit" -> "Please respond with '**yes**' to save the changes, '**no**' to modify changes again, or $CMD_CANCEL to abort."
-        "search" -> "Please respond with '**yes**' to proceed, '**no**' to modify description again, or $CMD_CANCEL to abort."
-        else -> "Please respond with '**yes**' to proceed, '**no**' to cancel, or $CMD_CANCEL to abort."
+        "create" -> "Please respond with '<b>yes</b>' to create the alert, '<b>no</b>' to edit description again, or $CMD_CANCEL to abort."
+        "delete" -> "Please respond with '<b>yes</b>' to delete the alert(s), '<b>no</b>' to cancel, or $CMD_CANCEL to abort."
+        "edit" -> "Please respond with '<b>yes</b>' to save the changes, '<b>no</b>' to modify changes again, or $CMD_CANCEL to abort."
+        "search" -> "Please respond with '<b>yes</b>' to proceed, '<b>no</b>' to modify description again, or $CMD_CANCEL to abort."
+        else -> "Please respond with '<b>yes</b>' to proceed, '<b>no</b>' to cancel, or $CMD_CANCEL to abort."
     }
     
     // === Session Debug Messages ===
