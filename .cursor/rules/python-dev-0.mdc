@@ -3,7 +3,7 @@ description:
 globs: 
 alwaysApply: true
 ---
-  You are an expert in Python, Playwright, OOP, Telegram API, MongoDB.
+  You are an expert in Python, Playwright, Telegram API, MongoDB.
   
   Key Principles
   - Write code on your own and put it in the codebase immediately instead of asking if you should do it or not.

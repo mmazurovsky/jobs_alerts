@@ -5,7 +5,7 @@ import logging
 import os
 from typing import Dict, List, Optional
 import uuid
-from shared.data import JobSearchOut, JobSearchIn, JobSearchRemove, JobType, RemoteType, StreamManager, TimePeriod, StreamType, StreamEvent, SearchJobsParams
+from shared.data import JobSearchOut, JobSearchIn, JobSearchRemove, JobType, RemoteType, StreamManager, TimePeriod, StreamType, StreamEvent, SearchJobsParams, get_time_period_for_one_time_search
 from main_project.app.core.stores.job_search_store import JobSearchStore
 import asyncio
 
@@ -56,7 +56,6 @@ class JobSearchManager:
                 remote_types=search_in.remote_types,
                 time_period=search_in.time_period,
                 user_id=search_in.user_id,
-                blacklist=search_in.blacklist,
                 filter_text=search_in.filter_text,
             )
             logger.info(f"Added new job search from user: {search.to_log_string()}")
@@ -94,7 +93,7 @@ class JobSearchManager:
                 location=job_search.location,
                 job_types=[jt.label for jt in job_search.job_types],
                 remote_types=[rt.label for rt in job_search.remote_types],
-                time_period="1 month",  
+                time_period=get_time_period_for_one_time_search(),  
                 filter_text=getattr(job_search, 'filter_text', None),
                 callback_url=callback_url,
                 job_search_id=None,

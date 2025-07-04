@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  core-service:
+    build:
+      context: ..
+      dockerfile: core_service/Dockerfile
+    image: registry.digitalocean.com/mmazurovsky-registry/job-alerts-core-service
+    container_name: jobs-alerts-core-service
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env.${ENV:-prod}
+    volumes:
+      - ./logs:/app/logs
+    platform: linux/amd64
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s 

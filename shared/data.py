@@ -207,7 +207,6 @@ class JobSearchIn(CustomBaseModel):
     remote_types: List[RemoteType]
     time_period: TimePeriod
     user_id: int  # Telegram user ID
-    blacklist: List[str] = []  # List of strings to blacklist from job titles
     filter_text: Optional[str] = None
 
     @field_validator('job_types', 'remote_types', 'time_period')
@@ -236,7 +235,6 @@ class JobSearchOut(CustomBaseModel):
     remote_types: List[RemoteType] = []
     time_period: TimePeriod
     user_id: int  # Telegram user ID
-    blacklist: List[str] = []  # List of strings to blacklist from job titles
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     filter_text: Optional[str] = None
 
@@ -280,6 +278,46 @@ def remote_types_list() -> str:
 
 def time_periods_list() -> str:
     return "\n".join(f"• {period.display_name}" for period in TimePeriod._instances.values())
+
+def get_job_types() -> List[str]:
+    """Get list of available job types."""
+    return [job_type.label for job_type in JobType._instances.values()]
+
+def get_remote_types() -> List[str]:
+    """Get list of available remote types."""
+    return [remote_type.label for remote_type in RemoteType._instances.values()]
+
+def get_time_periods() -> List[str]:
+    """Get list of available time periods."""
+    return [period.display_name for period in TimePeriod._instances.values()]
+
+def get_time_period_for_one_time_search() -> str:
+    """Get the specific time period used for one-time searches."""
+    return "1 week"
+
+def get_one_time_search_description() -> str:
+    """Get description of what one-time search does."""
+    return "Searches for relevant jobs posted in the last month - provides immediate results without creating ongoing alerts"
+
+def get_default_job_type() -> str:
+    """Get the default job type for searches."""
+    return "Full-time"
+
+def get_default_time_period() -> str:
+    """Get the default time period for recurring searches."""
+    return "1 hour"
+
+def get_all_job_types() -> List[str]:
+    """Get all available job types (same as get_job_types for compatibility)."""
+    return get_job_types()
+
+def get_default_remote_type() -> str:
+    """Get the default remote type for searches."""
+    return "Remote"
+
+def get_all_remote_types() -> List[str]:
+    """Get all available remote types (same as get_remote_types for compatibility)."""
+    return get_remote_types()
 
 class SentJobOut(CustomBaseModel):
     user_id: int

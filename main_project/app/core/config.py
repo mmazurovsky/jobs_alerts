@@ -34,6 +34,13 @@ class Config:
             logger.error('MONGO_URL not found in environment variables')
             raise RuntimeError('MONGO_URL not set in environment')
         
+        # DeepSeek API settings for LLM integration
+        self.deepseek_api_key = os.getenv('DEEPSEEK_API_KEY')
+        if not self.deepseek_api_key:
+            logger.warning("DEEPSEEK_API_KEY not found in environment variables - LLM features will be disabled")
+        else:
+            logger.info("Loaded DEEPSEEK_API_KEY")
+        
         # Log the configuration (safely)
         self._log_config()
     
@@ -53,6 +60,9 @@ class Config:
     def _log_config(self):
         """Log the current configuration, masking sensitive values."""
         logger.info("Current configuration:")
+        logger.info(f"  - Telegram Bot Token: {'***' if self.telegram_bot_token else 'NOT SET'}")
+        logger.info(f"  - MongoDB URI: {'***' if self.mongo_uri else 'NOT SET'}")
+        logger.info(f"  - DeepSeek API Key: {'***' if self.deepseek_api_key else 'NOT SET'}")
 
 # Create a singleton instance
 config = Config() 

@@ -15,4 +15,7 @@ services:
     restart: unless-stopped
     ports:
       - "8002:8002"
-    platform: linux/amd64
+    platform: linux/amd64 
+networks:
+  jobs_alerts_network:
+    external: true

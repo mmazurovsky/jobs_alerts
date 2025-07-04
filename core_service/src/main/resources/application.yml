@@ -1,0 +1,43 @@
+spring:
+  config:
+    activate:
+      on-profile: prod,local
+  application:
+    name: jobs-alerts-core-service
+  data:
+    mongodb:
+      # Use the same MongoDB URI pattern that works in the other Spring app
+      uri: mongodb+srv://${MONGO_USER}:${MONGO_PASSWORD}@${MONGO_HOST}/${MONGO_DB}?tls=true&authSource=admin
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      use-big-decimal-for-floats: true
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,env,beans,mappings
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+
+logging:
+  config: classpath:log4j2.xml
+  level:
+    root: ${LOG_LEVEL:INFO}
+    com.jobsalerts: ${LOG_LEVEL:INFO} 
+
+
+

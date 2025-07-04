@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  core-service:
+    build:
+      context: .
+      dockerfile: core_service/Dockerfile
+    ports:
+      - "8080:8080"
+    env_file:
+      - core_service/.env.test
+    environment:
+      # Override specific settings for Docker environment
+      - SPRING_PROFILES_ACTIVE=local
+      - LOG_LEVEL=INFO
+    networks:
+      - jobs_alerts_network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - linkedin-scraper-service
+
+  linkedin-scraper-service:
+    build:
+      context: .
+      dockerfile: linkedin_scraper_service/Dockerfile
+    ports:
+      - "8002:8002"
+    env_file:
+      - linkedin_scraper_service/.env
+    networks:
+      - jobs_alerts_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    volumes:
+      # Mount screenshots directory for debugging
+      - ./linkedin_scraper_service/screenshots:/app/linkedin_scraper_service/screenshots
+
+networks:
+  jobs_alerts_network:
+    driver: bridge
+    name: jobs_alerts_local 
