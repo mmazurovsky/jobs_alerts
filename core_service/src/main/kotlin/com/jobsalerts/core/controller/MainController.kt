@@ -1,5 +1,6 @@
 package com.jobsalerts.core.controller
 
+import com.jobsalerts.core.Messages
 import com.jobsalerts.core.domain.model.*
 import com.jobsalerts.core.repository.JobSearchRepository
 import com.jobsalerts.core.repository.SentJobRepository
@@ -54,10 +55,7 @@ class MainController(
             
             if (newJobs.isNotEmpty()) {
                 // Send notification about new jobs found
-                val message = "🎉 Found ${newJobs.size} new jobs for '${request.jobSearchId}'!\n\n" +
-                    newJobs.take(3).joinToString("\n\n") { job ->
-                        "📋 ${job.title}\n🏢 ${job.company}\n📍 ${job.location}\n🔗 ${job.link}"
-                    } + if (newJobs.size > 3) "\n\n... and ${newJobs.size - 3} more jobs!" else ""
+                val message = Messages.getJobNotificationMessage(newJobs, request.jobSearchId)
                 
                 val sendMessageEvent = ToTelegramSendMessageEvent(
                     message = message,

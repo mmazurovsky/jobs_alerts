@@ -1,13 +1,13 @@
 package com.jobsalerts.core.domain.model
 
 import com.fasterxml.jackson.annotation.JsonProperty
-import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import org.springframework.data.annotation.Id
 import org.springframework.data.mongodb.core.mapping.Field
 import org.springframework.data.mongodb.core.index.Indexed
 import org.springframework.data.mongodb.core.mapping.Document
+import java.time.OffsetDateTime
 
 data class JobListing(
         val title: String,
@@ -40,56 +40,12 @@ data class JobSearchIn(
         val filterText: String? = null
 ) {
     fun toHumanReadableString(): String {
-        return buildString {
-            appendLine("🔍 **Job Search Details:**")
-            appendLine("📍 **Job Title:** $jobTitle")
-            appendLine("🌍 **Location:** $location")
-            appendLine("💼 **Job Types:** ${jobTypes.joinToString(", ") { it.label }}")
-            appendLine("🏠 **Remote Types:** ${remoteTypes.joinToString(", ") { it.label }}")
-            appendLine("⏰ **Time Period:** ${timePeriod.displayName}")
-            if (!filterText.isNullOrBlank()) {
-                appendLine("🔍 **Filter Text:** $filterText")
-            }
-        }
+        return com.jobsalerts.core.Messages.getJobSearchDetails(this)
     }
     
     companion object {
         fun getFormattingInstructions(): String {
-            return buildString {
-                appendLine("🔍 **How to describe your job search:**")
-                appendLine()
-                appendLine("Please provide your job search criteria in natural language. I'll help you parse the details.")
-                appendLine()
-                appendLine("**Required Data:**")
-                appendLine("• **Job Title** - What role are you looking for?")
-                appendLine("  Examples: 'Python Software Engineer', 'Senior Data Scientist', 'Product Manager', 'DevOps Engineer'")
-                appendLine()
-                appendLine("• **Location** - Where do you want to work?")
-                appendLine("  Examples: New York, San Francisco, Berlin, London, Vancouver,Worldwide")
-                appendLine()
-                appendLine("**Optional Data:**")
-                appendLine("• **Job Types** - Employment type preferences:")
-                appendLine("  - Available options: ${JobType.getAllLabels().joinToString(", ")}")
-                appendLine("  - Default if not specified: ${JobType.getDefault().label}")
-                appendLine()
-                appendLine("• **Remote Types** - Work arrangement preferences:")
-                appendLine("  - Available options: ${RemoteType.getAllLabels().joinToString(", ")}")
-                appendLine("  - Default if not specified: ${RemoteType.getDefault().label}")
-                appendLine()
-                appendLine("• **Alert Frequency** - How often bot should search for jobs and write you a message with results:")
-                appendLine("  - Recommended options: ${TimePeriod.getRecommendedLabels().joinToString(", ")}")
-                appendLine("  - Default if not specified: ${TimePeriod.getDefault().displayName}")
-                appendLine()
-                appendLine("• **Filter Text** - Additional prompt with specific requirements or exclusions")
-                appendLine("  Examples: 'no on-call', 'without requirement to speak German', 'providing visa sponsorship', 'employer should not be a startup', 'no relocation required'")
-                appendLine()
-                appendLine("**Example Descriptions:**")
-                getExamples().forEach { example ->
-                    appendLine("• \"$example\"")
-                }
-                appendLine()
-                appendLine("Feel free to describe your requirements in natural language - I'll help parse the details!")
-            }
+            return com.jobsalerts.core.Messages.getJobSearchFormattingInstructions()
         }
 
         fun getExamples(): List<String> {
@@ -107,15 +63,15 @@ data class JobSearchIn(
 
 @Document(collection = "job_searches")
 data class JobSearchOut(
-        @Id val id: String,
-        @field:Field("job_title") val jobTitle: String,
-        val location: String,
-        @field:Field("job_types") val jobTypes: List<JobType> = emptyList(),
-        @field:Field("remote_types") val remoteTypes: List<RemoteType> = emptyList(),
-        @field:Field("time_period") val timePeriod: TimePeriod,
-        @field:Field("user_id") val userId: Long,
-        @field:Field("created_at") val createdAt: Instant = Instant.now(),
-        @field:Field("filter_text") val filterText: String? = null
+    @Id val id: String,
+    @field:Field("job_title") val jobTitle: String,
+    val location: String,
+    @field:Field("job_types") val jobTypes: List<JobType> = emptyList(),
+    @field:Field("remote_types") val remoteTypes: List<RemoteType> = emptyList(),
+    @field:Field("time_period") val timePeriod: TimePeriod,
+    @field:Field("user_id") val userId: Long,
+    @field:Field("created_at") val createdAt: OffsetDateTime,
+    @field:Field("filter_text") val filterText: String? = null
 ) {
     fun toLogString(): String {
         return "id=$id, title=$jobTitle, location=$location, " +
@@ -125,10 +81,6 @@ data class JobSearchOut(
     }
 
     fun toMessage(): String {
-        val humanReadableTime =
-                createdAt
-                        .atZone(ZoneId.systemDefault())
-                        .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
         return buildString {
             appendLine("🆔 Alert ID: $id")
             appendLine("📝 Job Title: $jobTitle")
@@ -137,7 +89,6 @@ data class JobSearchOut(
             appendLine("🏠 Remote Types: ${remoteTypes.joinToString(", ") { it.label }}")
             appendLine("🔍 Filter Text: ${filterText ?: "None"}")
             appendLine("⏰ Frequency: ${timePeriod.displayName}")
-            appendLine("📅 Created At: $humanReadableTime")
         }
     }
     
@@ -154,7 +105,8 @@ data class JobSearchOut(
                 remoteTypes = input.remoteTypes,
                 timePeriod = input.timePeriod,
                 userId = input.userId,
-                filterText = input.filterText
+                filterText = input.filterText,
+                createdAt = OffsetDateTime.now(),
             )
         }
         
@@ -170,7 +122,8 @@ data class JobSearchOut(
                 remoteTypes = input.remoteTypes,
                 timePeriod = input.timePeriod,
                 userId = input.userId,
-                filterText = input.filterText
+                filterText = input.filterText,
+                createdAt = OffsetDateTime.now(),
             )
         }
     }
@@ -180,7 +133,7 @@ data class JobSearchOut(
 data class SentJobOut(
         @Indexed(unique = false) @field:Field("user_id") val userId: Long,
         @Indexed(unique = false) @field:Field("job_url") val jobUrl: String,
-        @field:Field("sent_at") val sentAt: Instant = Instant.now()
+        @field:Field("sent_at") val sentAt: OffsetDateTime = OffsetDateTime.now(),
 )
 
 data class SearchJobsParams(

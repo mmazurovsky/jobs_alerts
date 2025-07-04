@@ -52,18 +52,7 @@ data class FullJobListing(
     val filterReason: String? = null
 ) {
     fun toMessage(): String {
-        return buildString {
-            appendLine("⭐ **Compatibility:** ${compatibilityScore ?: "N/A"}")
-            appendLine("📝 **Title:** $title")
-            appendLine("🏢 **Employer:** $company")
-            appendLine("🔧 **Tech Stack:** ${techstack.joinToString(", ")}")
-            appendLine("📍 **Location:** $location")
-            appendLine("📅 **Created:** $createdAgo")
-            if (!filterReason.isNullOrBlank()) {
-                appendLine("🤖 **AI Reasoning:** $filterReason")
-            }
-            appendLine("🔗 **Link:** $link")
-        }
+        return com.jobsalerts.core.Messages.getJobListingMessage(this)
     }
 }
 

@@ -152,7 +152,7 @@ class DeleteSearchService(
             }
             lowerConfirmation in listOf("no", "n", "cancel") -> {
                 sendMessage(chatId, Messages.CANCEL_MESSAGE)
-                sessionManager.resetToIdle(userId)
+                sessionManager.setContext(userId, userId = userId, context = DeleteAlertSubContext.SelectingAlert)
             }
             else -> {
                 sendMessage(chatId, Messages.getConfirmationInstruction("delete"))

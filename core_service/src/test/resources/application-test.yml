@@ -1,5 +1,7 @@
 spring:
   config:
+    activate:
+      on-profile: test
     import: file:.env.test[.properties]
   application:
     name: jobs-alerts-core-service-test

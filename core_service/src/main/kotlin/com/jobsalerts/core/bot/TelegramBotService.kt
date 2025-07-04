@@ -68,6 +68,7 @@ class TelegramBotService(
         outboundSubscription?.cancel()
         botJob?.cancel()
         serviceScope.cancel()
+        bot.close()
         logger.info { "TelegramBotService cleanup completed" }
     }
 

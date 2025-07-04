@@ -7,7 +7,7 @@ cd linkedin_scraper_service
 cd ..
 
 # Deploy main project
-cd main_project
+cd core_service
 ./deploy.sh
 cd ..
 

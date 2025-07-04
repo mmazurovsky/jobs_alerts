@@ -16,8 +16,11 @@ import org.springframework.data.mongodb.core.convert.MappingMongoConverter
 import org.springframework.data.mongodb.core.convert.MongoCustomConversions
 import org.springframework.data.mongodb.core.mapping.MongoMappingContext
 import org.springframework.data.mongodb.repository.config.EnableMongoRepositories
+import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeParseException
 import java.util.*
 
 @Configuration
@@ -42,7 +45,7 @@ class MongoConfig {
         return MongoCustomConversions(
             listOf(
                 OffsetDateTimeWriteConverter(),
-                OffsetDateTimeReadConverter()
+                OffsetDateTimeReadConverter(),
             )
         )
     }

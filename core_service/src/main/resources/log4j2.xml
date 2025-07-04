@@ -37,13 +37,13 @@
         </RollingFile>
 
         <!-- Async wrapper for better performance -->
-        <AsyncFile name="AsyncFileAppender">
+        <AsyncAppender name="AsyncFileAppender" bufferSize="8192">
             <AppenderRef ref="FileAppender"/>
-        </AsyncFile>
+        </AsyncAppender>
         
-        <AsyncFile name="AsyncErrorFileAppender">
+        <AsyncAppender name="AsyncErrorFileAppender" bufferSize="8192">
             <AppenderRef ref="ErrorFileAppender"/>
-        </AsyncFile>
+        </AsyncAppender>
     </Appenders>
 
     <Loggers>
