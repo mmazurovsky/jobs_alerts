@@ -101,7 +101,7 @@ class AlertCreationServiceTest {
             remoteTypes = listOf(RemoteType.Remote),
             timePeriod = TimePeriod.`1 hour`,
             userId = userId,
-            createdAt = Instant.now()
+            createdAt = java.time.OffsetDateTime.now()
         )
 
         whenever(jobSearchRepository.save(any<JobSearchOut>())).thenReturn(expectedJobSearchOut)
@@ -179,7 +179,7 @@ class AlertCreationServiceTest {
             remoteTypes = listOf(RemoteType.Remote),
             timePeriod = TimePeriod.`24 hours`,
             userId = userId,
-            createdAt = Instant.now()
+            createdAt = java.time.OffsetDateTime.now()
         )
 
         // When

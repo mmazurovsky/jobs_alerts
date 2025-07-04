@@ -18,7 +18,8 @@ class AlertCreationService(
     private val jobSearchScheduler: JobSearchScheduler,
     private val fromTelegramEventBus: FromTelegramEventBus,
     private val toTelegramEventBus: ToTelegramEventBus,
-    private val sessionManager: SessionManager
+    private val sessionManager: SessionManager,
+    private val userLimitsService: UserLimitsService
 ) : Logging {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -110,6 +111,14 @@ class AlertCreationService(
 
     private suspend fun processAlertDescription(chatId: Long, userId: Long, description: String) {
         try {
+            // Check job alert limits BEFORE parsing
+            val limitCheck = userLimitsService.checkJobAlertLimit(userId)
+            if (!limitCheck.allowed) {
+                sendMessage(chatId, Messages.getJobAlertLimitExceededMessage(limitCheck))
+                sessionManager.resetToIdle(userId)
+                return
+            }
+
             sendMessage(chatId, Messages.ANALYZING_DESCRIPTION)
 
             val parseResult = jobSearchParserService.parseUserInput(description, userId)

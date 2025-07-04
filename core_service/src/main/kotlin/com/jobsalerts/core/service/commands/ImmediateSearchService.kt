@@ -16,7 +16,8 @@ class ImmediateSearchService(
     private val scraperJobService: ScraperJobService,
     private val fromTelegramEventBus: FromTelegramEventBus,
     private val toTelegramEventBus: ToTelegramEventBus,
-    private val sessionManager: SessionManager
+    private val sessionManager: SessionManager,
+    private val userLimitsService: UserLimitsService
 ) : Logging {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -94,6 +95,14 @@ class ImmediateSearchService(
 
     private suspend fun processJobSearchDescription(chatId: Long, userId: Long, description: String) {
         try {
+            // Check daily search limits BEFORE parsing
+            val limitCheck = userLimitsService.checkDailySearchLimit(userId)
+            if (!limitCheck.allowed) {
+                sendMessage(chatId, Messages.getDailySearchLimitExceededMessage(limitCheck))
+                sessionManager.resetToIdle(userId)
+                return
+            }
+
             sendMessage(chatId, Messages.ANALYZING_SEARCH)
 
             val parseResult = jobSearchParserService.parseUserInput(description, userId)
@@ -137,6 +146,9 @@ class ImmediateSearchService(
         when {
             lowerConfirmation in listOf("yes", "y", "confirm", "ok", "proceed") -> {
                 try {
+                    // Track the search usage BEFORE performing the search
+                    userLimitsService.trackDailySearch(userId)
+                    
                     sendMessage(chatId, Messages.STARTING_SEARCH)
 
                     val searchId = performImmediateSearch(jobSearch)

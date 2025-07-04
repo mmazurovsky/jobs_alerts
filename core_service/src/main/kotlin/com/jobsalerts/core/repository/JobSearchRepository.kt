@@ -9,4 +9,5 @@ interface JobSearchRepository : MongoRepository<JobSearchOut, String> {
     fun findByUserId(userId: Long): List<JobSearchOut>
     fun findByIdAndUserId(id: String, userId: Long): JobSearchOut?
     fun deleteByIdAndUserId(id: String, userId: Long): Long
+    fun countByUserId(userId: Long): Long
 }

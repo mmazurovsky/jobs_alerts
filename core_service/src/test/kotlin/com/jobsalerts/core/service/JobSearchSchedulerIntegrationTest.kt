@@ -130,7 +130,7 @@ class JobSearchSchedulerIntegrationTest {
             remoteTypes = listOf(RemoteType.Remote),
             timePeriod = TimePeriod.`1 hour`,
             userId = 500L,
-            createdAt = Instant.now()
+            createdAt = java.time.OffsetDateTime.now()
         )
 
         // When: Schedule the job
@@ -367,7 +367,7 @@ class JobSearchSchedulerIntegrationTest {
             remoteTypes = listOf(RemoteType.Remote),
             timePeriod = timePeriod,
             userId = userId,
-            createdAt = Instant.now()
+            createdAt = java.time.OffsetDateTime.now()
         )
     }
 } 

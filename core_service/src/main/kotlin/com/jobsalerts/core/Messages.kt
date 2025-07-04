@@ -702,4 +702,57 @@ object Messages {
             appendLine()
             appendLine("Use $CMD_CANCEL to abort this operation.")
         }
+
+    // === User Limits Messages ===
+    fun getJobAlertLimitExceededMessage(limitCheck: LimitCheckResult): String = buildString {
+        appendLine("🚫 <b>Job Alert Limit Reached</b>")
+        appendLine()
+        appendLine("You have ${limitCheck.currentUsage}/${limitCheck.maxAllowed} job alerts (${limitCheck.subscriptionTier.displayName} plan)")
+        appendLine()
+        appendLine(limitCheck.reason)
+        appendLine()
+        appendLine("<b>Options:</b>")
+        appendLine("• $CMD_DELETE_ALERT - Delete an existing alert")
+        appendLine("• $CMD_LIST_ALERTS - View your current alerts")
+        if (limitCheck.subscriptionTier.name == "FREE") {
+            appendLine("• /upgrade - Upgrade to Premium for more alerts")
+        }
+    }
+
+    fun getDailySearchLimitExceededMessage(limitCheck: LimitCheckResult): String = buildString {
+        appendLine("🚫 <b>Daily Search Limit Reached</b>")
+        appendLine()
+        appendLine("You have used ${limitCheck.currentUsage}/${limitCheck.maxAllowed} searches today (${limitCheck.subscriptionTier.displayName} plan)")
+        appendLine()
+        appendLine(limitCheck.reason)
+        appendLine()
+        appendLine("Try again tomorrow for more searches!")
+        if (limitCheck.subscriptionTier.name == "FREE") {
+            appendLine()
+            appendLine("• /upgrade - Upgrade to Premium for more daily searches")
+        }
+    }
+
+    fun getSubscriptionStatusMessage(
+        subscriptionTier: SubscriptionTier,
+        currentAlerts: Int,
+        currentDailySearches: Int
+    ): String = buildString {
+        appendLine("📊 <b>Your Account Status</b>")
+        appendLine()
+        appendLine("🎯 <b>Current Plan:</b> ${subscriptionTier.displayName}")
+        appendLine()
+        appendLine("📊 <b>Job Alerts:</b> $currentAlerts/${if (subscriptionTier.maxJobAlerts == -1) "Unlimited" else subscriptionTier.maxJobAlerts}")
+        appendLine("🔍 <b>Daily Searches:</b> $currentDailySearches/${if (subscriptionTier.maxDailySearches == -1) "Unlimited" else subscriptionTier.maxDailySearches}")
+        
+        if (subscriptionTier.name == "FREE") {
+            appendLine()
+            appendLine("💡 <b>Upgrade Benefits:</b>")
+            appendLine("• More job alerts (25 vs 5)")
+            appendLine("• More daily searches (15 vs 3)")
+            appendLine("• Advanced filtering features")
+            appendLine()
+            appendLine("• /upgrade - Learn about Premium plans")
+        }
+    }
 } 
